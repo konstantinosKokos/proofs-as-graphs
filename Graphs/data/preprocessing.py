@@ -64,6 +64,14 @@ def get_atom(node: Union[ANode, CNode]) -> str:
     return node.connective if isinstance(node, CNode) else node.atom
 
 
+def extract_sents(graphs: List[_Graph]) -> Set[str]:
+    def extract_sent(graph: _Graph) -> str:
+        nodes = sorted(get_nodes(graph), key=lambda node: node.index)
+        words = list(map(lambda n: n.word, filter(lambda n: isinstance(n, WNode), nodes)))
+        return ' '.join(words)
+    return set(map(extract_sent, graphs))
+
+
 def make_atom_map(graphs: List[_Graph]) -> Dict[str, int]:
     def get_atoms(graph: _Graph) -> Set[str]:
         return set(map(get_atom, filter(lambda node: not isinstance(node, WNode), get_nodes(graph))))

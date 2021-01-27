@@ -1,15 +1,24 @@
-from ..data.preprocessing import proofnet_to_graph, tokenize_graph, make_atom_map
+from ..data.preprocessing import proofnet_to_graph, tokenize_graph, make_atom_map, extract_sents
 # from ..data.tulkens_vectors import vectorize
-from ..data.spacy_vectors import vectorize
+from ..data.spacy_vectors import vectorize, make_word_map
 import pickle
+from tqdm import tqdm
 
 
 def proc(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4.dev0.p'):
+    print('Loading file..')
     with open(data_file, 'rb') as df:
         dataset = pickle.load(df)
-    graphs = [[proofnet_to_graph(pn) for pn in subset] for subset in dataset]
+    print('Making graphs..')
+    graphs = [[proofnet_to_graph(pn) for pn in tqdm(subset)] for subset in dataset]
+    print('Extracting sents..')
+    sents = extract_sents(sum(graphs, []))
+    print('Building vocab..')
+    word_map = make_word_map(sents)
+    print('Making atom map..')
     atom_map = make_atom_map(sum(graphs, []))
-    return [[tokenize_graph(g, atom_map, vectorize) for g in subset] for subset in graphs]
+    print('Tokenizing graphs..')
+    return [[tokenize_graph(g, atom_map, word_map) for g in tqdm(subset)] for subset in graphs]
 
 
 
