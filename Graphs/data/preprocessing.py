@@ -1,62 +1,62 @@
-from typing import TypeVar, Tuple, List, Iterator, Set, Dict, Union
+from typing import TypeVar, Tuple, List, Iterator, Set, Dict, Union, Callable
 from dataclasses import dataclass
 from itertools import count
-
-import networkx as nx
+from collections import defaultdict
 
 from LassyExtraction.milltypes import WordType, FunctorType, DiamondType, BoxType, EmptyType, PolarizedType
 from LassyExtraction.aethel import AxiomLinks, ProofNet
 
-T_co = TypeVar('T_co', bound='Node', covariant=True)
+Node_co = TypeVar('Node_co', bound='Node', covariant=True)
+T = TypeVar('T')
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class Node:
     index: int
 
-    def __str__(self):
-        return str(self.index)
+    def __hash__(self):
+        return self.index
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class WNode(Node):
     word: str
 
-    def __str__(self):
-        return self.word
-
-    def __repr__(self):
-        return str(self)
+    def __hash__(self):
+        return self.index
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class ANode(Node):
     atom: str
     polarity: bool
     j_idx: int
 
-    def __str__(self):
-        return self.atom
-
-    def __repr__(self):
-        return str(self)
+    def __hash__(self):
+        return self.index
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class CNode(Node):
     connective: str
 
-    def __str__(self):
-        return self.connective
-
-    def __repr__(self):
-        return str(self)
+    def __hash__(self):
+        return self.index
 
 
-def tokenize_graph(graph: nx.DiGraph, atom_map: Dict[str, int], word_map: Dict[str, int]):
+_Graph = Dict[Node, Set[Node]]
+
+
+def get_nodes(graph: _Graph) -> Set[Node]:
+    return set(graph.keys()).union(*graph.values())
+
+
+def tokenize_graph(graph: _Graph, atom_map: Dict[str, int], word_map: Callable[[str], T]) \
+        -> Tuple[List[int], List[T], Tuple[List[int], List[int]]]:
+
     nodes, edge_index = graph_to_tuple(graph)
     atom_ids = [0 if isinstance(node, WNode) else atom_map[get_atom(node)] for node in nodes]
-    word_ids = [word_map[node.word] if isinstance(node, WNode) else 0 for node in nodes]
+    word_ids = [word_map(node.word) if isinstance(node, WNode) else 0 for node in nodes]
     return atom_ids, word_ids, edge_index
 
 
@@ -64,144 +64,140 @@ def get_atom(node: Union[ANode, CNode]) -> str:
     return node.connective if isinstance(node, CNode) else node.atom
 
 
-def make_atom_map(graphs: List[nx.DiGraph]) -> Dict[str, int]:
-    def get_atoms(graph: nx.DiGraph) -> Set[str]:
-        return set(map(get_atom, filter(lambda node: not isinstance(node, WNode), graph.nodes)))
+def make_atom_map(graphs: List[_Graph]) -> Dict[str, int]:
+    def get_atoms(graph: _Graph) -> Set[str]:
+        return set(map(get_atom, filter(lambda node: not isinstance(node, WNode), get_nodes(graph))))
     labels = set.union(*[get_atoms(g) for g in graphs])
     return {label: i + 1 for i, label in enumerate(sorted(labels))}
 
 
-def graph_to_tuple(graph: nx.DiGraph):
-    nodes = sorted(graph.nodes, key=lambda node: node.index)
+def proofnet_to_tuple(proofnet: ProofNet) -> Tuple[List[Node], Tuple[List[int], List[int]]]:
+    return graph_to_tuple(proofnet_to_graph(proofnet))
+
+
+def graph_to_tuple(graph: _Graph) -> Tuple[List[Node], Tuple[List[int], List[int]]]:
+    nodes = sorted(get_nodes(graph), key=lambda node: node.index)
     node_dict = {node.index: i for i, node in enumerate(nodes)}
-    edges = sorted(graph.edges, key=lambda edge: (edge[0].index, edge[1].index))
-    edge_index = list(zip(*[(node_dict[edge[0].index], node_dict[edge[1].index]) for edge in edges]))
+    edges = []
+    for k in nodes:
+        vs = sorted(graph[k], key=lambda v: v.index)
+        edges.extend([(node_dict[k.index], node_dict[v.index]) for v in vs])
+    edge_index = list(zip(*edges))
     return nodes, edge_index
 
 
-def proofnet_to_graph(proofnet: ProofNet) -> nx.DiGraph:
+def proofnet_to_graph(proofnet: ProofNet) -> _Graph:
     # todo: processing as options
     words = proofnet.proof_frame.get_words()
     types = proofnet.proof_frame.get_types()
     words, types = merge_multi_crd(words, types)
-    graph = add_axiom_links(types_to_graph(words, types, proofnet.proof_frame.conclusion), proofnet.axiom_links)
-    graph = add_lexical_shortcuts(graph)
-    graph = binarize_modalities(graph)
+    graph = defaultdict(lambda: set())
+    add_types(graph, words, types, proofnet.proof_frame.conclusion)
+    add_axiom_links(graph, proofnet.axiom_links)
+    add_lexical_shortcuts(graph)
+    binarize_modalities(graph)
     return graph
 
 
-def find_by_jidx(graph: nx.DiGraph, j_idx: int) -> Node:
-    candidates = [node for node in graph.nodes if isinstance(node, ANode) and node.j_idx == j_idx]
+def find_by_jidx(graph: _Graph, j_idx: int) -> Node:
+    candidates = [node for node in get_nodes(graph) if isinstance(node, ANode) and node.j_idx == j_idx]
     if len(candidates) != 1:
         raise ValueError(f'Found {len(candidates)} nodes with {j_idx=}: {candidates}')
     return candidates[0]
 
 
-def find_targets(graph: nx.DiGraph, index: int) -> Set[Node]:
-    return {node for node in graph.nodes if any(map(lambda edge: edge[0].index == index and edge[1] == node,
-                                                graph.edges))}
+def find_targets(graph: _Graph, source: Node) -> Set[Node]:
+    return graph[source]
 
 
-def find_sources(graph: nx.DiGraph, index: int) -> Set[Node]:
-    return {node for node in graph.nodes if any(map(lambda edge: edge[0] == node and edge[1].index == index,
-                                                graph.edges))}
+def find_sources(graph: _Graph, target: Node) -> Set[Node]:
+    return {node for node in get_nodes(graph) if target in graph[node]}
 
 
-def add_axiom_links(graph: nx.DiGraph, axiom_links: AxiomLinks) -> nx.DiGraph:
+def add_axiom_links(graph: _Graph, axiom_links: AxiomLinks) -> None:
     for _pos, _neg in axiom_links:
         pos = find_by_jidx(graph, _pos)
         neg = find_by_jidx(graph, _neg)
-        sources = find_sources(graph, neg.index)
-        targets = find_targets(graph, neg.index)
-        graph.remove_edges_from([(neg, target) for target in targets])
-        graph.remove_edges_from([(source, neg) for source in sources])
-        graph.add_edges_from([(source, pos) for source in sources])
-        graph.add_edges_from([(pos, target) for target in targets])
-        graph.remove_node(neg)
-    return graph
+        sources = find_sources(graph, neg)
+        targets = find_targets(graph, neg)
+        graph[pos] = graph[pos].union(targets)
+        for source in sources:
+            graph[source].remove(neg)
+            graph[source].add(pos)
+        del graph[neg]
+    return
 
 
-def add_lexical_shortcuts(graph: nx.DiGraph) -> nx.DiGraph:
-    wnodes = sorted(filter(lambda node: isinstance(node, WNode), graph.nodes), key=lambda node: node.index)
-    graph.add_edges_from(zip(wnodes, wnodes[1:]))
-    return graph
+def add_lexical_shortcuts(graph: _Graph) -> None:
+    wnodes = sorted(filter(lambda node: isinstance(node, WNode), get_nodes(graph)), key=lambda node: node.index)
+    for src, tgt in zip(wnodes, wnodes[1:]):
+        graph[src].add(tgt)
+    return
 
 
-def binarize_modalities(graph: nx.DiGraph) -> nx.DiGraph:
-    modalities = list(filter(lambda node: isinstance(node, CNode) and node.connective != '→', graph.nodes))
+def binarize_modalities(graph: _Graph) -> None:
+    modalities = list(filter(lambda node: isinstance(node, CNode) and node.connective != '→', get_nodes(graph)))
 
     for modality in modalities:
-        targets = {target for target in find_targets(graph, modality.index)
+        targets = {target for target in find_targets(graph, modality)
                    if isinstance(target, CNode) and target.connective == '→'}
         if not targets:
             continue
-        targets2 = set.union(*[find_targets(graph, target.index) for target in targets])
-        sources = set.union(*[find_sources(graph, target.index) for target in targets]) - {modality}
+        targets2 = set.union(*[find_targets(graph, target) for target in targets])
+        sources = set.union(*[find_sources(graph, target) for target in targets]) - {modality}
 
-        # to remove
-        mod_to_t1s = [(modality, target) for target in targets]
-        t1s_to_t2s = [(target, target2) for target in targets for target2 in targets2]
-        source_to_t1s = [(source, target) for source in sources for target in targets]
-        # to add
-        mod_to_t2s = [(modality, target) for target in targets2]
-        source_to_mod = [(source, modality) for source in sources]
-
-        graph.remove_edges_from(mod_to_t1s + t1s_to_t2s + source_to_t1s)
-        graph.add_edges_from(mod_to_t2s + source_to_mod)
-        graph.remove_nodes_from(targets)
-    return graph
+        graph[modality] -= targets
+        graph[modality] = graph[modality].union(targets2)
+        for target in targets:
+            del graph[target]
+        for source in sources:
+            graph[source] -= targets
+            graph[source].add(modality)
+    return
 
 
-def types_to_graph(words: List[str], wordtypes: List[WordType], conclusion: PolarizedType) -> nx.DiGraph:
-
+def add_types(graph: _Graph, words: List[str], wordtypes: List[WordType], conclusion: PolarizedType) -> None:
     counter = count()
-    graph = nx.DiGraph()
     for word, wordtype in zip(words, wordtypes):
         wnodes = [WNode(index=next(counter), word=subword) for subword in word.split()]
-        graph.add_nodes_from([(wnode, {'depth': -1}) for wnode in wnodes])
-        graph.add_edges_from(list(zip(wnodes, wnodes[1:])))
-        type_graph, root = type_to_graph(wordtype, counter)
-        graph = nx.union(graph, type_graph)
-        graph.add_edge(wnodes[-1], root)
-    graph.add_node(ANode(next(counter), atom=conclusion.depolarize().type, polarity=False, j_idx=conclusion.index),
-                   depth=0)
-    return graph
+        for src, tgt in zip(wnodes, wnodes[1:]):
+            graph[src].add(tgt)
+        root = add_type(graph, wordtype, counter)
+        graph[wnodes[-1]].add(root)
+    graph[ANode(next(counter), atom=conclusion.depolarize().type, polarity=False, j_idx=conclusion.index)] = set()
+    return
 
 
-def type_to_graph(wordtype: WordType, vargen: Iterator[int]) -> Tuple[nx.DiGraph, Node]:
-    graph = nx.DiGraph()
+def add_type(graph: _Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
 
-    def fn(wt: WordType, pol: bool, depth: int) -> Node:
+    def fn(wt: WordType, pol: bool) -> Node:
         if isinstance(wt, PolarizedType):
-            node = ANode(next(vargen), atom=wt.depolarize().type, polarity=pol, j_idx=wt.index)
-            graph.add_node(node, depth=depth)
-            return node
+            return ANode(next(vargen), atom=wt.depolarize().type, polarity=pol, j_idx=wt.index)
         if isinstance(wt, FunctorType):
             node = CNode(next(vargen), '→')
-            graph.add_node(node, depth=depth)
-            argnode = fn(wt.argument, not pol, depth+1)
-            resnode = fn(wt.result, pol, depth+1)
+            # graph.add_node(node, depth=depth)
+            argnode = fn(wt.argument, not pol)
+            resnode = fn(wt.result, pol)
             pos, neg = (resnode, argnode) if pol else (argnode, resnode)
-            graph.add_edges_from([(node, pos), (neg, node)])
+            graph[node].add(pos)
+            graph[neg].add(node)
             return node
         if isinstance(wt, DiamondType):
             node = CNode(next(vargen), wt.modality)
-            graph.add_node(node, depth=depth)
-            argnode = fn(wt.content, pol, depth+1)
+            argnode = fn(wt.content, pol)
             src, tgt = (node, argnode) if pol else (argnode, node)
-            graph.add_edge(src, tgt)
+            graph[src].add(tgt)
             return node
         if isinstance(wt, BoxType):
             node = CNode(next(vargen), wt.modality)
-            graph.add_node(node, depth=depth)
-            argnode = fn(wt.content, pol, depth+1)
+            argnode = fn(wt.content, pol)
             src, tgt = (node, argnode) if pol else (argnode, node)
-            graph.add_edge(src, tgt)
+            graph[src].add(tgt)
             return node
         raise TypeError
 
-    root = fn(wordtype, True, 0)
-    return graph, root
+    root = fn(wordtype, True)
+    return root
 
 
 def merge_multi_crd(words: List[str], wordtypes: List[WordType]) -> Tuple[List[str], List[WordType]]:
@@ -217,11 +213,3 @@ def merge_multi_crd(words: List[str], wordtypes: List[WordType]) -> Tuple[List[s
         else:
             ret.append((word, wordtype))
     return tuple(zip(*reversed(ret)))
-
-
-#
-# def make_atom_map(node_lists: List[List[Node]]) -> Dict[str, int]:
-#     nodes = sorted(set(map(lambda n: n.content[0] if isinstance(n, ANode) else n.content,
-#                            filter(lambda n: isinstance(n, CNode) or isinstance(n, ANode),
-#                                   chain.from_iterable(node_lists)))))
-#     return {n: i for i, n in enumerate(nodes)}
