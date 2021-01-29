@@ -31,7 +31,7 @@ def log_batch(model: Model, batch: Batch, mask_chance: float, num_hops: int, log
 
 def log_epoch(model: Model, dataloader: DataLoader, mask_chance: float, num_hops: int, logger: Logger, train: bool):
     for batch in iter(dataloader):
-        log_batch(model, batch, mask_chance, num_hops, logger, train)
+        log_batch(model, batch.to(model.device), mask_chance, num_hops, logger, train)
     logger.register_epoch(train)
 
 

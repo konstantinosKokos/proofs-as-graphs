@@ -5,11 +5,12 @@ from ..neural.embedding import InvertibleEmbedder, from_table
 
 
 class Model(Module):
-    def __init__(self, atom_map, embedding_table):
+    def __init__(self, atom_map, embedding_table, device: str = 'cuda'):
         super(Model, self).__init__()
-        self.word_embedding = from_table(embedding_table)
-        self.atom_embedding = InvertibleEmbedder(len(atom_map) + 1, 300)
-        self.cgn = GCNConv(in_channels=300, out_channels=300)
+        self.word_embedding = from_table(embedding_table).to(device)
+        self.atom_embedding = InvertibleEmbedder(len(atom_map) + 1, 300).to(device)
+        self.cgn = GCNConv(in_channels=300, out_channels=300, add_self_loops=True, improved=True).to(device)
+        self.device = device
 
     def embed_atoms(self, atoms: Tensor) -> Tensor:
         return self.atom_embedding.embed(atoms).squeeze(1)
