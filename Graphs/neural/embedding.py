@@ -14,7 +14,7 @@ class InvertibleEmbedder(Module):
         return embedding(ids, self.table, self.padding_idx)
 
     def invert(self, weights: Tensor) -> Tensor:
-        return linear(weights, self.table.t())
+        return linear(weights, self.table)
 
 
 def from_table(table: Union[array, Tensor]) -> Embedding:

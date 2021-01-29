@@ -6,6 +6,7 @@ chardet==4.0.0
 cycler==0.10.0
 cymem==2.0.5
 decorator==4.4.2
+gensim==3.8.3
 googledrivedownloader==0.4
 graphviz==0.16
 h5py==3.1.0
@@ -37,7 +38,6 @@ scikit-learn==0.24.0
 scipy==1.6.0
 six==1.15.0
 smart-open==4.1.2
-spacy==2.3.5
 srsly==1.0.5
 thinc==7.4.5
 threadpoolctl==2.1.0

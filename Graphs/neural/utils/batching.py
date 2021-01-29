@@ -11,3 +11,4 @@ def graph_to_data(atom_ids: List[int], word_ids: List[int], edge_index: Tuple[Li
 
 def make_dataloader(data_list: List[Data], batch_size: int) -> DataLoader:
     return DataLoader(data_list, batch_size=batch_size)
+
