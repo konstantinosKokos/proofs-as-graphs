@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from itertools import count
 from collections import defaultdict
 
-from LassyExtraction.milltypes import WordType, FunctorType, DiamondType, BoxType, EmptyType, PolarizedType
+from LassyExtraction.milltypes import (WordType, FunctorType, DiamondType, BoxType, EmptyType, PolarizedType,
+                                       AtomicType, ModalType)
 from LassyExtraction.aethel import AxiomLinks, ProofNet
 
 Node_co = TypeVar('Node_co', bound='Node', covariant=True)
@@ -76,7 +77,7 @@ def make_atom_map(graphs: List[_Graph]) -> Dict[str, int]:
     def get_atoms(graph: _Graph) -> Set[str]:
         return set(map(get_atom, filter(lambda node: not isinstance(node, WNode), get_nodes(graph))))
     labels = set.union(*[get_atoms(g) for g in graphs])
-    return {label: i + 1 for i, label in enumerate(sorted(labels))}
+    return {label: i for i, label in enumerate(['[PAD]', '[MASK]'] + sorted(labels))}
 
 
 def proofnet_to_tuple(proofnet: ProofNet) -> Tuple[List[Node], Tuple[List[int], List[int]]]:
@@ -167,6 +168,7 @@ def binarize_modalities(graph: _Graph) -> None:
 def add_types(graph: _Graph, words: List[str], wordtypes: List[WordType], conclusion: PolarizedType) -> None:
     counter = count()
     for word, wordtype in zip(words, wordtypes):
+        wordtype = collate_type(wordtype)
         wnodes = [WNode(index=next(counter), word=subword) for subword in word.split()]
         for src, tgt in zip(wnodes, wnodes[1:]):
             graph[src].add(tgt)
@@ -221,3 +223,21 @@ def merge_multi_crd(words: List[str], wordtypes: List[WordType]) -> Tuple[List[s
         else:
             ret.append((word, wordtype))
     return tuple(zip(*reversed(ret)))
+
+
+def collate_atom(atom: str) -> str:
+    return 'NP' if atom == 'SPEC' else atom
+
+
+def collate_type(wordtype: WordType) -> WordType:
+    if isinstance(wordtype, AtomicType):
+        wordtype.type = collate_atom(wordtype.type)
+        return wordtype
+    elif isinstance(wordtype, FunctorType):
+        collate_type(wordtype.argument)
+        collate_type(wordtype.result)
+        return wordtype
+    elif isinstance(wordtype, ModalType):
+        collate_type(wordtype.content)
+        return wordtype
+    raise TypeError(f'Unexpected argument {wordtype} of type {type(wordtype)}')
