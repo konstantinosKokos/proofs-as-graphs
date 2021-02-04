@@ -1,5 +1,5 @@
 from ..data.preprocessing import proofnet_to_graph, tokenize_graph, make_atom_map, extract_sents, Graph
-from ..data.process_lassy import load_processed
+from ..data.process_lassy import load_lassy
 
 from LassyExtraction.aethel import ProofNet, Term
 
@@ -8,7 +8,7 @@ import pickle
 from tqdm import tqdm
 
 print('Loading atom map..')
-_, atom_map, _ = load_processed()
+_, atom_map, _ = load_lassy()
 
 
 def parsable(pn: ProofNet) -> bool:
@@ -43,11 +43,11 @@ def proc_sick(data_file: str = './everything.p'):
         if not graphs_a or not graphs_b:
             continue
         graph_a, graph_b = graphs_a[0], graphs_b[0]
-        add_to = train if label == 'TRAIN' else dev if label == 'TRIAL' else test
+        add_to = train if subset == 'TRAIN' else dev if subset == 'TRIAL' else test
         add_to.append((graph_a, graph_b, label))
     return train, dev, test
 
 
-def load_processed(proc_file: str = './processed_sick.p'):
+def load_sick(proc_file: str = './processed_sick.p'):
     with open(proc_file, 'rb') as f:
         return pickle.load(f)
