@@ -45,3 +45,7 @@ def graphs_to_data(graph_a: Tuple[List[int], List[int], Tuple[List[int], List[in
     x_h, edge_index_h, _ = tensorize_graph(*graph_a)
     x_p, edge_index_p, _ = tensorize_graph(*graph_b)
     return GraphPair(edge_index_h, x_h, edge_index_p, x_p, torch.tensor(label, dtype=torch.long))
+
+
+def pair_loader(data_list: List[GraphPair], batch_size: int) -> DataLoader:
+    return DataLoader(data_list, batch_size=batch_size, follow_batch=['x_h', 'x_p'])
