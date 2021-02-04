@@ -23,7 +23,7 @@ def parsable(pn: ProofNet) -> bool:
 def proc_sick(data_file: str = './everything.p'):
     from ..data.spacy_vectors import make_word_map
 
-    label_map = {'ENTAILMENT': 0, 'NEUTRAL': 1, 'CONTRADICTION': 1}
+    label_map = {'ENTAILMENT': 0, 'NEUTRAL': 1, 'CONTRADICTION': 2}
 
     print('Loading file..')
     with open(data_file, 'rb') as f:
