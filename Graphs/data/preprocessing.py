@@ -1,4 +1,4 @@
-from typing import TypeVar, Tuple, List, Iterator, Set, Dict, Union, Callable
+from Graphs.typing import Tuple, List, Iterator, Set, Dict, Union, Callable, TypeVar
 from dataclasses import dataclass
 from itertools import count
 from collections import defaultdict
@@ -45,14 +45,14 @@ class CNode(Node):
         return self.index
 
 
-_Graph = Dict[Node, Set[Node]]
+Graph = Dict[Node, Set[Node]]
 
 
-def get_nodes(graph: _Graph) -> Set[Node]:
+def get_nodes(graph: Graph) -> Set[Node]:
     return set(graph.keys()).union(*graph.values())
 
 
-def tokenize_graph(graph: _Graph, atom_map: Dict[str, int], word_map: Callable[[str], T]) \
+def tokenize_graph(graph: Graph, atom_map: Dict[str, int], word_map: Callable[[str], T]) \
         -> Tuple[List[int], List[T], Tuple[List[int], List[int]]]:
 
     nodes, edge_index = graph_to_tuple(graph)
@@ -65,16 +65,16 @@ def get_atom(node: Union[ANode, CNode]) -> str:
     return node.connective if isinstance(node, CNode) else node.atom
 
 
-def extract_sents(graphs: List[_Graph]) -> Set[str]:
-    def extract_sent(graph: _Graph) -> str:
+def extract_sents(graphs: List[Graph]) -> Set[str]:
+    def extract_sent(graph: Graph) -> str:
         nodes = sorted(get_nodes(graph), key=lambda node: node.index)
         words = list(map(lambda n: n.word, filter(lambda n: isinstance(n, WNode), nodes)))
         return ' '.join(words)
     return set(map(extract_sent, graphs))
 
 
-def make_atom_map(graphs: List[_Graph]) -> Dict[str, int]:
-    def get_atoms(graph: _Graph) -> Set[str]:
+def make_atom_map(graphs: List[Graph]) -> Dict[str, int]:
+    def get_atoms(graph: Graph) -> Set[str]:
         return set(map(get_atom, filter(lambda node: not isinstance(node, WNode), get_nodes(graph))))
     labels = set.union(*[get_atoms(g) for g in graphs])
     return {label: i for i, label in enumerate(['[PAD]', '[MASK]'] + sorted(labels))}
@@ -84,7 +84,7 @@ def proofnet_to_tuple(proofnet: ProofNet) -> Tuple[List[Node], Tuple[List[int], 
     return graph_to_tuple(proofnet_to_graph(proofnet))
 
 
-def graph_to_tuple(graph: _Graph) -> Tuple[List[Node], Tuple[List[int], List[int]]]:
+def graph_to_tuple(graph: Graph) -> Tuple[List[Node], Tuple[List[int], List[int]]]:
     nodes = sorted(get_nodes(graph), key=lambda node: node.index)
     node_dict = {node.index: i for i, node in enumerate(nodes)}
     edges = []
@@ -95,7 +95,7 @@ def graph_to_tuple(graph: _Graph) -> Tuple[List[Node], Tuple[List[int], List[int
     return nodes, edge_index
 
 
-def proofnet_to_graph(proofnet: ProofNet) -> _Graph:
+def proofnet_to_graph(proofnet: ProofNet) -> Graph:
     # todo: processing as options
     words = proofnet.proof_frame.get_words()
     types = proofnet.proof_frame.get_types()
@@ -108,22 +108,22 @@ def proofnet_to_graph(proofnet: ProofNet) -> _Graph:
     return graph
 
 
-def find_by_jidx(graph: _Graph, j_idx: int) -> Node:
+def find_by_jidx(graph: Graph, j_idx: int) -> Node:
     candidates = [node for node in get_nodes(graph) if isinstance(node, ANode) and node.j_idx == j_idx]
     if len(candidates) != 1:
         raise ValueError(f'Found {len(candidates)} nodes with {j_idx=}: {candidates}')
     return candidates[0]
 
 
-def find_targets(graph: _Graph, source: Node) -> Set[Node]:
+def find_targets(graph: Graph, source: Node) -> Set[Node]:
     return graph[source]
 
 
-def find_sources(graph: _Graph, target: Node) -> Set[Node]:
+def find_sources(graph: Graph, target: Node) -> Set[Node]:
     return {node for node in get_nodes(graph) if target in graph[node]}
 
 
-def add_axiom_links(graph: _Graph, axiom_links: AxiomLinks) -> None:
+def add_axiom_links(graph: Graph, axiom_links: AxiomLinks) -> None:
     for _pos, _neg in axiom_links:
         pos = find_by_jidx(graph, _pos)
         neg = find_by_jidx(graph, _neg)
@@ -137,14 +137,14 @@ def add_axiom_links(graph: _Graph, axiom_links: AxiomLinks) -> None:
     return
 
 
-def add_lexical_shortcuts(graph: _Graph) -> None:
+def add_lexical_shortcuts(graph: Graph) -> None:
     wnodes = sorted(filter(lambda node: isinstance(node, WNode), get_nodes(graph)), key=lambda node: node.index)
     for src, tgt in zip(wnodes, wnodes[1:]):
         graph[src].add(tgt)
     return
 
 
-def binarize_modalities(graph: _Graph) -> None:
+def binarize_modalities(graph: Graph) -> None:
     modalities = list(filter(lambda node: isinstance(node, CNode) and node.connective != '→', get_nodes(graph)))
 
     for modality in modalities:
@@ -165,7 +165,7 @@ def binarize_modalities(graph: _Graph) -> None:
     return
 
 
-def add_types(graph: _Graph, words: List[str], wordtypes: List[WordType], conclusion: PolarizedType) -> None:
+def add_types(graph: Graph, words: List[str], wordtypes: List[WordType], conclusion: PolarizedType) -> None:
     counter = count()
     for word, wordtype in zip(words, wordtypes):
         wordtype = collate_type(wordtype)
@@ -178,7 +178,7 @@ def add_types(graph: _Graph, words: List[str], wordtypes: List[WordType], conclu
     return
 
 
-def add_type(graph: _Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
+def add_type(graph: Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
 
     def fn(wt: WordType, pol: bool) -> Node:
         if isinstance(wt, PolarizedType):

@@ -3,7 +3,7 @@ import pickle
 from tqdm import tqdm
 
 
-def proc(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4.dev0.p'):
+def proc_lassy(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4.dev0.p'):
     from ..data.spacy_vectors import get_embedding_table, make_word_map
 
     print('Loading file..')
@@ -22,6 +22,6 @@ def proc(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4.dev0.
     return tokenized, atom_map, get_embedding_table()
 
 
-def load_processed(proc_file: str = './processed.p'):
+def load_processed(proc_file: str = './processed_lassy.p'):
     with open(proc_file, 'rb') as f:
         return pickle.load(f)
