@@ -1,11 +1,7 @@
-from ..data.preprocessing import proofnet_to_graph, tokenize_graph, make_atom_map, extract_sents, Graph
+from ..data.preprocessing import proofnet_to_graph, tokenize_graph, extract_sents
 from ..data.process_lassy import load_lassy
-
-from LassyExtraction.aethel import ProofNet, Term
-
-from Graphs.typing import Dict, Maybe
+from LassyExtraction.aethel import ProofNet
 import pickle
-from tqdm import tqdm
 
 print('Loading atom map..')
 _, atom_map, _ = load_lassy()
@@ -24,11 +20,11 @@ def proc_sick(data_file: str = './everything.p'):
     from ..data.spacy_vectors import make_word_map
 
     label_map = {'ENTAILMENT': 0, 'NEUTRAL': 1, 'CONTRADICTION': 2}
-
     print('Loading file..')
     with open(data_file, 'rb') as f:
-        sents, samples, a_nets, n_nets = pickle.load(f)
+        _sents, samples, a_nets, n_nets = pickle.load(f)
     available_nets = [list(filter(parsable, sum(ns, [])))[:1] for ns in zip(n_nets, a_nets)]
+
     print('Making graphs..')
     available_graphs = [[proofnet_to_graph(pn) for pn in sent] for sent in available_nets]
     print('Extracting sents..')
@@ -46,6 +42,11 @@ def proc_sick(data_file: str = './everything.p'):
         add_to = train if subset == 'TRAIN' else dev if subset == 'TRIAL' else test
         add_to.append((graph_a, graph_b, label))
     return train, dev, test
+
+
+def save_sick(proc_file: str = './processed_sick.p'):
+    with open(proc_file, 'wb') as f:
+        pickle.dump(proc_sick(), f)
 
 
 def load_sick(proc_file: str = './processed_sick.p'):

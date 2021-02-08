@@ -22,6 +22,11 @@ def proc_lassy(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4
     return tokenized, atom_map, get_embedding_table()
 
 
+def save_lassy(proc_file: str = './processed_lassy.p'):
+    with open(proc_file, 'wb') as f:
+        pickle.dump(proc_lassy(), f)
+
+
 def load_lassy(proc_file: str = './processed_lassy.p'):
     with open(proc_file, 'rb') as f:
         return pickle.load(f)

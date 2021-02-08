@@ -53,23 +53,26 @@ def get_nodes(graph: Graph) -> Set[Node]:
 
 
 def tokenize_graph(graph: Graph, atom_map: Dict[str, int], word_map: Callable[[str], T]) \
-        -> Tuple[List[int], List[T], Tuple[List[int], List[int]]]:
+        -> Tuple[List[int], List[T], List[int], Tuple[List[int], List[int]]]:
 
     nodes, edge_index = graph_to_tuple(graph)
     atom_ids = [0 if isinstance(node, WNode) else atom_map[get_atom(node)] for node in nodes]
-    word_ids = [word_map(node.word) if isinstance(node, WNode) else 0 for node in nodes]
-    return atom_ids, word_ids, edge_index
+    word_pos, word_ids = list(zip(*[(i, word_map(node.word))
+                                    for i, node in enumerate(nodes) if isinstance(node, WNode)]))
+    return atom_ids, word_ids, word_pos, edge_index
 
 
 def get_atom(node: Union[ANode, CNode]) -> str:
     return node.connective if isinstance(node, CNode) else node.atom
 
 
+def extract_sent(graph: Graph) -> str:
+    nodes = sorted(get_nodes(graph), key=lambda node: node.index)
+    words = list(map(lambda n: n.word, filter(lambda n: isinstance(n, WNode), nodes)))
+    return ' '.join(words)
+
+
 def extract_sents(graphs: List[Graph]) -> Set[str]:
-    def extract_sent(graph: Graph) -> str:
-        nodes = sorted(get_nodes(graph), key=lambda node: node.index)
-        words = list(map(lambda n: n.word, filter(lambda n: isinstance(n, WNode), nodes)))
-        return ' '.join(words)
     return set(map(extract_sent, graphs))
 
 
@@ -103,7 +106,7 @@ def proofnet_to_graph(proofnet: ProofNet) -> Graph:
     graph = defaultdict(lambda: set())
     add_types(graph, words, types, proofnet.proof_frame.conclusion)
     add_axiom_links(graph, proofnet.axiom_links)
-    add_lexical_shortcuts(graph)
+    # add_lexical_shortcuts(graph)
     binarize_modalities(graph)
     return graph
 
@@ -170,8 +173,8 @@ def add_types(graph: Graph, words: List[str], wordtypes: List[WordType], conclus
     for word, wordtype in zip(words, wordtypes):
         wordtype = collate_type(wordtype)
         wnodes = [WNode(index=next(counter), word=subword) for subword in word.split()]
-        for src, tgt in zip(wnodes, wnodes[1:]):
-            graph[src].add(tgt)
+        # for src, tgt in zip(wnodes, wnodes[1:]):
+        #     graph[src].add(tgt)
         root = add_type(graph, wordtype, counter)
         graph[wnodes[-1]].add(root)
     graph[ANode(next(counter), atom=conclusion.depolarize().type, polarity=False, j_idx=conclusion.index)] = set()
