@@ -7,7 +7,9 @@ from torch.nn.functional import embedding, linear
 class InvertibleEmbedder(Module):
     def __init__(self, num_embeddings: int, embedding_dim: int, padding_idx: int = 0):
         super(InvertibleEmbedder, self).__init__()
-        self.table = Parameter(data=rand(num_embeddings, embedding_dim), requires_grad=True)
+        data = rand(num_embeddings, embedding_dim)
+        data[0] = 0.
+        self.table = Parameter(data=data, requires_grad=True)
         self.padding_idx = padding_idx
 
     def embed(self, ids: Tensor) -> Tensor:
@@ -17,8 +19,9 @@ class InvertibleEmbedder(Module):
         return linear(weights, self.table)
 
 
-def from_table(table: Union[array, Tensor]) -> Embedding:
+def from_table(table: Union[array, Tensor], frozen: bool) -> Embedding:
     ne, ed = table.shape
     embedder = Embedding(ne, ed, padding_idx=0)
     embedder.weight.data = tensor(table).to(float32)
+    embedder.requires_grad_(not frozen)
     return embedder

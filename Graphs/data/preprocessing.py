@@ -1,4 +1,4 @@
-from Graphs.typing import Tuple, List, Iterator, Set, Dict, Union, Callable, TypeVar
+from ..typing import Tuple, List, Iterator, Set, Dict, Union, Callable, TypeVar
 from dataclasses import dataclass
 from itertools import count
 from collections import defaultdict
@@ -6,6 +6,8 @@ from collections import defaultdict
 from LassyExtraction.milltypes import (WordType, FunctorType, DiamondType, BoxType, EmptyType, PolarizedType,
                                        AtomicType, ModalType)
 from LassyExtraction.aethel import AxiomLinks, ProofNet
+
+from transformers import RobertaTokenizer
 
 Node_co = TypeVar('Node_co', bound='Node', covariant=True)
 T = TypeVar('T')
@@ -48,17 +50,31 @@ class CNode(Node):
 Graph = Dict[Node, Set[Node]]
 
 
+def visualize(graph: Graph):
+    import graphviz as gv
+
+    dg = gv.Digraph()
+
+    for s in graph.keys():
+        for t in graph[s]:
+            dg.node(str(s.index), label=str(s))
+            dg.node(str(t.index), label=str(t))
+
+            dg.edge(str(s.index), str(t.index))
+    dg.render(view=True)
+
+
 def get_nodes(graph: Graph) -> Set[Node]:
     return set(graph.keys()).union(*graph.values())
 
 
-def tokenize_graph(graph: Graph, atom_map: Dict[str, int], word_map: Callable[[str], T]) \
+def tokenize_graph(graph: Graph, atom_map: Dict[str, int], word_map: Callable[[List[str]], List[T]]) \
         -> Tuple[List[int], List[T], List[int], Tuple[List[int], List[int]]]:
 
     nodes, edge_index = graph_to_tuple(graph)
     atom_ids = [0 if isinstance(node, WNode) else atom_map[get_atom(node)] for node in nodes]
-    word_pos, word_ids = list(zip(*[(i, word_map(node.word))
-                                    for i, node in enumerate(nodes) if isinstance(node, WNode)]))
+    word_pos, words = list(zip(*[(i, node.word) for i, node in enumerate(nodes) if isinstance(node, WNode)]))
+    word_ids = word_map(words)
     return atom_ids, word_ids, word_pos, edge_index
 
 
@@ -68,7 +84,7 @@ def get_atom(node: Union[ANode, CNode]) -> str:
 
 def extract_sent(graph: Graph) -> str:
     nodes = sorted(get_nodes(graph), key=lambda node: node.index)
-    words = list(map(lambda n: n.word, filter(lambda n: isinstance(n, WNode), nodes)))
+    words = list(map(lambda n: n.word.strip().lower(), filter(lambda n: isinstance(n, WNode), nodes)))
     return ' '.join(words)
 
 

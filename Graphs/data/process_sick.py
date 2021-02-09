@@ -1,4 +1,4 @@
-from ..data.preprocessing import proofnet_to_graph, tokenize_graph, extract_sents
+from ..data.preprocessing import proofnet_to_graph, tokenize_graph, extract_sents, visualize
 from ..data.process_lassy import load_lassy
 from LassyExtraction.aethel import ProofNet
 import pickle
@@ -23,7 +23,7 @@ def proc_sick(data_file: str = './everything.p'):
     print('Loading file..')
     with open(data_file, 'rb') as f:
         _sents, samples, a_nets, n_nets = pickle.load(f)
-    available_nets = [list(filter(parsable, sum(ns, [])))[:1] for ns in zip(n_nets, a_nets)]
+    available_nets = [list(filter(parsable, sum(ns, [])))[:1] for ns in zip(a_nets, n_nets)]
 
     print('Making graphs..')
     available_graphs = [[proofnet_to_graph(pn) for pn in sent] for sent in available_nets]
