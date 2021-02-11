@@ -1,4 +1,4 @@
-from ..typing import (Tuple, List, Iterator, Set, Dict, Callable, Node, ANode, CNode, WNode, Graph, GraphData)
+from ..typing import (Tuple, List, Iterator, Set, Dict, Callable, Node, ANode, CNode, WNode, Graph, Edge, GraphData)
 from collections import defaultdict
 from itertools import count
 
@@ -7,20 +7,25 @@ from LassyExtraction.milltypes import (WordType, FunctorType, DiamondType, BoxTy
 from LassyExtraction.aethel import AxiomLinks, ProofNet
 
 
+lex, arg, res = 'lex', 'arg', 'res'
+
+
 def get_nodes(graph: Graph) -> Set[Node]:
-    return set(filter(lambda k: k is not None, graph.keys())).union(*graph.values())
+    return set(graph.keys()).union(*[find_targets(graph, k) for k in graph.keys()])
 
 
 def tokenize_data(untokenized: GraphData, atom_map: Dict[str, int],
                   word_map: Callable[[List[str]], List[Tuple[int, bool]]]) -> GraphData:
+    edge_map = {lex: 0, arg: 1, res: 2}
     atom_ids = [atom_map[atom] for atom in untokenized.nodes]
     ids_and_starts = word_map(untokenized.words)
     return GraphData(words=ids_and_starts, nodes=atom_ids, edges=untokenized.edges,
-                     conclusion=untokenized.conclusion, roots=untokenized.roots)
+                     conclusion=untokenized.conclusion, roots=untokenized.roots,
+                     edge_attrs=[edge_map[edge] for edge in untokenized.edge_attrs])
 
 
 def make_atom_map(graphs: List[GraphData]) -> Dict[str, int]:
-    labels = set.union(*[set(g.nodes) for g in graphs])
+    labels = set.union(*[set(g.nodes) for g in graphs]).difference({'[PAD]', '[MASK]'})
     return {label: i for i, label in enumerate(['[PAD]', '[MASK]'] + sorted(labels))}
 
 
@@ -29,21 +34,24 @@ def proofnet_to_graphdata(proofnet: ProofNet) -> GraphData:
     words = proofnet.proof_frame.get_words()
     types = proofnet.proof_frame.get_types()
     graph = defaultdict(lambda: set())
-    lex_ancors, cnode = add_types(graph, words, types, proofnet.proof_frame.conclusion)
+    lex_anchors, cnode = add_types(graph, words, types, proofnet.proof_frame.conclusion)
     cnode = add_axiom_links(graph, cnode, proofnet.axiom_links)
     binarize_modalities(graph)
-    remove_lex(graph, lex_ancors)
+    merge_multi_crd(graph, lex_anchors)
 
     # Now convert to graphdata
     nodes = sorted(get_nodes(graph), key=lambda node: node.index)
     node_dict = {node.index: i for i, node in enumerate(nodes)}
-    srcs, tgts = [], []
+    srcs, tgts, attrs = [], [], []
     for k in nodes:
-        vs = sorted(graph[k], key=lambda v: v.index)
-        srcs.extend([node_dict[k.index] for _ in vs])
-        tgts.extend([node_dict[v.index] for v in vs])
-    return GraphData(nodes=[node.label for node in nodes], edges=(srcs, tgts), words=words,
-                     roots=sorted([node_dict[root.index] for root in graph[None]]), conclusion=cnode.index)
+        vs = sorted(graph[k], key=lambda edge: edge.target.index)
+        srcs.extend([node_dict[k.index] for _ in graph[k]])
+        tgts.extend([node_dict[v.index] for v, _ in vs])
+        attrs.extend([e for _, e in vs])
+
+    return GraphData(nodes=['[PAD]' if isinstance(node, WNode) else node.label for node in nodes],
+                     edges=(srcs, tgts), words=words,  roots=sorted([node_dict[lanc.index] for lanc in lex_anchors]),
+                     edge_attrs=attrs, conclusion=node_dict[cnode.index])
 
 
 def find_by_jidx(graph: Graph, j_idx: int) -> Node:
@@ -54,11 +62,11 @@ def find_by_jidx(graph: Graph, j_idx: int) -> Node:
 
 
 def find_targets(graph: Graph, source: Node) -> Set[Node]:
-    return graph[source]
+    return set(map(lambda edge: edge.target, graph[source]))
 
 
 def find_sources(graph: Graph, target: Node) -> Set[Node]:
-    return {node for node in get_nodes(graph) if target in graph[node]}
+    return {node for node in get_nodes(graph) if target in find_targets(graph, node)}
 
 
 def add_axiom_links(graph: Graph, cnode: ANode, axiom_links: AxiomLinks) -> ANode:
@@ -68,11 +76,11 @@ def add_axiom_links(graph: Graph, cnode: ANode, axiom_links: AxiomLinks) -> ANod
         if neg == cnode:
             cnode = pos
         sources = find_sources(graph, neg)
-        targets = find_targets(graph, neg)
+        targets = graph[neg]
         graph[pos] = graph[pos].union(targets)
         for source in sources:
-            graph[source].remove(neg)
-            graph[source].add(pos)
+            graph[source].remove(Edge(neg, arg))
+            graph[source].add(Edge(pos, res))
         del graph[neg]
     return cnode
 
@@ -81,35 +89,37 @@ def binarize_modalities(graph: Graph) -> None:
     modalities = list(filter(lambda node: isinstance(node, CNode) and node.label != '→', get_nodes(graph)))
 
     for modality in modalities:
-        targets = {target for target in find_targets(graph, modality)
-                   if isinstance(target, CNode) and target.label == '→'}
+        targets: Set[Node] = set(filter(lambda node: isinstance(node, CNode) and node.label == '→',
+                                        find_targets(graph, modality)))
         if not targets:
             continue
-        targets2 = set.union(*[find_targets(graph, target) for target in targets])
-        sources = set.union(*[find_sources(graph, target) for target in targets]) - {modality}
-
-        graph[modality] -= targets
+        targets2: Set[Edge] = set.union(*[graph[target] for target in targets])
+        sources: Set[Node] = set.union(*[find_sources(graph, target) for target in targets]) - {modality}
+        graph[modality] = set(filter(lambda edge: edge.target not in targets, graph[modality]))
         graph[modality] = graph[modality].union(targets2)
         for target in targets:
             del graph[target]
         for source in sources:
-            graph[source] -= targets
-            graph[source].add(modality)
-    return
+            edges = set(map(lambda edge: edge.label, filter(lambda edge: edge.target in targets, graph[source])))
+            assert len(edges) == 1
+            label = list(edges)[0]
+            graph[source] = set(filter(lambda edge: edge.target not in targets, graph[source]))
+            graph[source].add(Edge(modality, lex if isinstance(source, WNode) else label))
 
 
 def add_types(graph: Graph, words: List[str], wordtypes: List[WordType], conclusion: PolarizedType) \
         -> Tuple[List[WNode], ANode]:
     counter = count()
     wordtypes = list(map(collate_type, wordtypes))
-    roots = []
+    lex_anchors = []
     for word, wordtype in zip(words, wordtypes):
         wnode = WNode(next(counter), word)
-        roots.append(wnode)
-        graph[wnode].add(add_type(graph, wordtype, counter))
+        lex_anchors.append(wnode)
+        root = add_type(graph, wordtype, counter)
+        graph[wnode].add(Edge(root, lex))
     conc = ANode(next(counter), label=conclusion.depolarize().type, polarity=False, j_idx=conclusion.index)
     graph[conc] = set()
-    return roots, conc
+    return lex_anchors, conc
 
 
 def add_type(graph: Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
@@ -122,20 +132,20 @@ def add_type(graph: Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
             argnode = fn(wt.argument, not pol)
             resnode = fn(wt.result, pol)
             pos, neg = (resnode, argnode) if pol else (argnode, resnode)
-            graph[node].add(pos)
-            graph[neg].add(node)
+            graph[node].add(Edge(pos, res))
+            graph[neg].add(Edge(node, arg))
             return node
         if isinstance(wt, DiamondType):
             node = CNode(next(vargen), wt.modality)
             argnode = fn(wt.content, pol)
             src, tgt = (node, argnode) if pol else (argnode, node)
-            graph[src].add(tgt)
+            graph[src].add(Edge(tgt, arg))
             return node
         if isinstance(wt, BoxType):
             node = CNode(next(vargen), wt.modality)
             argnode = fn(wt.content, pol)
             src, tgt = (node, argnode) if pol else (argnode, node)
-            graph[src].add(tgt)
+            graph[src].add(Edge(tgt, res))
             return node
         if isinstance(wt, EmptyType):
             return ANode(next(vargen), label=wt.type, polarity=pol, j_idx=-1)
@@ -144,36 +154,21 @@ def add_type(graph: Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
     return root
 
 
-def remove_lex(graph: Graph, roots: List[Node]):
+def merge_multi_crd(graph: Graph, anchors: List[Node]):
+    def daughter(_anchor: Node) -> Node:
+        tgts = find_targets(graph, _anchor)
+        assert len(tgts) == 1
+        return list(tgts)[0]
+
     empties = []
-    for root in reversed(roots):
-        _tgt = list(graph[root])
-        assert len(_tgt) == 1
-        tgt = _tgt[0]
-        if tgt.label == '_':
-            empties.append(tgt)
-        if tgt.label == 'cnj' and empties:
+    for anchor in reversed(anchors):
+        root = daughter(anchor)
+        if root.label == '_':
+            empties.append(root)
+        if root.label == 'cnj' and empties:
             empty = empties.pop()
-            tgts = graph[tgt]
-            assert len(tgts) == 1
-            graph[empty] = graph[empty].union(tgts)
-        graph[None] = graph[None].union(graph[root])
-        del graph[root]
-
-
-# def merge_multi_crd(words: List[str], wordtypes: List[WordType]) -> Tuple[List[str], List[WordType]]:
-#     ret = []
-#     empties = []
-#     for word, wordtype in reversed(list(zip(words, wordtypes))):
-#         if isinstance(wordtype, EmptyType):
-#             empties.append(word)
-#         elif empties and (isinstance(wordtype, FunctorType) and isinstance(wordtype.argument, DiamondType)
-#                           and wordtype.argument.modality == 'cnj'):
-#             empty = empties.pop()
-#             ret.append((f'{word} {empty}', wordtype))
-#         else:
-#             ret.append((word, wordtype))
-#     return tuple(zip(*reversed(ret)))
+            cnj = daughter(root)
+            graph[empty].add(Edge(cnj, lex))
 
 
 def collate_atom(atom: str) -> str:
@@ -200,9 +195,9 @@ def visualize(graph: Graph):
     dg = gv.Digraph()
 
     for s in graph.keys():
-        for t in graph[s]:
+        for t, e in graph[s]:
             dg.node(str(s.index) if s is not None else 'SRC', label=str(s))
             dg.node(str(t.index), label=str(t))
 
-            dg.edge(str(s.index) if s is not None else 'SRC', str(t.index))
+            dg.edge(str(s.index) if s is not None else 'SRC', str(t.index), label=e)
     dg.render(view=True)

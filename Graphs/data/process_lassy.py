@@ -14,7 +14,7 @@ def proc_lassy(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4
     print('Making atom map..')
     atom_map = make_atom_map(sum(graphs, []))
     print('Tokenizing graphs..')
-    tokenized = [[tokenize_data(g, atom_map, word_map)[0] for g in tqdm(subset)] for subset in graphs]
+    tokenized = [[tokenize_data(g, atom_map, word_map) for g in tqdm(subset)] for subset in graphs]
     return tokenized, atom_map, get_embedding_table()
 
 

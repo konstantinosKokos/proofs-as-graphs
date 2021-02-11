@@ -1,28 +1,21 @@
 import spacy
-from typing import Set, Callable
-from typing import Optional as Maybe
+from ..typing import Maybe, List, Tuple
 import numpy as np
-from collections import defaultdict
 
-model = spacy.load('nl_core_news_md')
+model = spacy.load('nl_core_news_lg')
+unk, dim = model.vocab.vectors.data.shape
 
 
-def make_word_map(sents: Set[str]) -> Callable[[str], int]:
-    def cdict(word: str) -> int:
-        return ret[word]
-    docs = model.pipe(sents, disable=['parser', 'tagger', 'ner'])
-    ret = defaultdict(lambda: 20000)
-    for doc in docs:
-        for token in doc:
-            ret[token.text] = token.lex_id if token.has_vector else 20000
-    return cdict
+def word_map(words: List[str]) -> List[Tuple[int, bool]]:
+    docs = model.pipe(words, disable=['parser', 'tagger', 'ner'])
+    return [(token.lex_id if token.has_vector else unk, i == 0) for tokens in docs for i, token in enumerate(tokens)]
 
 
 def vectorize(word: str) -> Maybe[int]:
     doc = model(word)
-    return doc[0].lex_id if doc[0].has_vector else 20000
+    return doc[0].lex_id if doc[0].has_vector else unk
 
 
 def get_embedding_table() -> np.array:
     vectors = model.vocab.vectors.data
-    return np.concatenate([vectors, np.zeros((1, 300))])
+    return np.concatenate([vectors, np.zeros((1, dim))])

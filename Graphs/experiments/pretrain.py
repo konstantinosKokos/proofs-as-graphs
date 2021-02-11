@@ -7,30 +7,30 @@ from ..neural.utils.schedules import save_if_best
 
 
 def mask_and_predict(model: Base, batch: Batch, mask_chance: float, ) -> Tuple[Tensor, Tensor]:
-    amask = make_mask(batch.x, mask_chance)
+    amask = make_mask(batch.x, mask_chance, model.atom_map['[PAD]'])
     truths = batch.x[amask.eq(1)].squeeze(-1)
     atoms = where(amask.eq(1), model.atom_map['[MASK]'], batch.x)
 
     amask = amask.squeeze(-1)
-    vectors = model.contextualize_nodes(atoms, batch.word_ids, batch.word_pos, batch.word_ids_batch, batch.edge_index)
+    vectors = model.contextualize_nodes(atoms=atoms, edge_index=batch.edge_index, edge_ids=batch.edge_attr)
     predictions = model.classify_nodes(vectors[amask.eq(1)])
     return predictions, truths
 
 
 @torch.no_grad()
-def make_mask(atoms: Tensor, mask_chance: float) -> Tensor:
-    non_padded = atoms.ne(0)
+def make_mask(atoms: Tensor, mask_chance: float, ignore: int) -> Tensor:
+    non_padded = atoms.ne(ignore)
     r = torch.rand_like(non_padded, dtype=torch.float).lt(mask_chance)
     return r.bitwise_and(non_padded)
 
 
 def log_batch(model: Base, batch: Batch, mask_chance: float, logger: Logger, train: bool) -> None:
-    model.train(train)
     predictions, truths = mask_and_predict(model, batch.to(model.device), mask_chance)
     logger.log(predictions, truths, train=train)
 
 
 def log_epoch(model: Base, dataloader: DataLoader, mask_chance: float, logger: Logger, train: bool):
+    model.train(train)
     for batch in iter(dataloader):
         log_batch(model, batch, mask_chance, logger, train)
     logger.register_epoch(train, save_if_best(lambda: model.save('./stored_models/pretrain.model')))

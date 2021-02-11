@@ -68,12 +68,18 @@ class WNode(Node):
         return self.index
 
 
-Graph = Dict[Maybe[Node], Set[Node]]
+class Edge(NamedTuple, Generic[T0]):
+    target: Node
+    label: T0
+
+
+Graph = Dict[Node, Set[Edge]]
 
 
 class GraphData(NamedTuple, Generic[T0, T1]):
     nodes: List[T0]                             # A list of token labels
     edges: Tuple[List[int], List[int]]          # Edge_index in COO format
+    edge_attrs: List[T0]                       # A list of edge labels
     roots: List[int]                            # A list of pointers to type anchors
     conclusion: int                             # A pointer to the conclusion atom
     words: List[T1]                             # A list of words
