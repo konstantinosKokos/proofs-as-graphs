@@ -9,11 +9,11 @@ class InvertibleEmbedder(Module):
     def __init__(self, num_embeddings: int, embedding_dim: int):
         super(InvertibleEmbedder, self).__init__()
         data = rand(num_embeddings, embedding_dim)
-        xavier_normal_(data)
+        xavier_normal_(data[1:])
         self.table = Parameter(data=data, requires_grad=True)
 
     def embed(self, ids: Tensor) -> Tensor:
-        return embedding(ids, self.table)
+        return embedding(ids, self.table, padding_idx=0)
 
     def invert(self, weights: Tensor) -> Tensor:
         return linear(weights, self.table)
@@ -23,5 +23,6 @@ def from_table(table: Union[array, Tensor], frozen: bool) -> Embedding:
     ne, ed = table.shape
     embedder = Embedding(ne, ed, padding_idx=0)
     embedder.weight.data = tensor(table).to(float32)
+    embedder.weight.data[0] = 0.
     embedder.requires_grad_(not frozen)
     return embedder

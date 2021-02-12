@@ -8,7 +8,7 @@ def longt(x: Union[List[int], Tuple[List[int], ...]]) -> Tensor:
 
 def tensorize_graph(graph: GraphData) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     node_labels = longt(graph.nodes)
-    edge_index = longt(graph.edges)
+    edge_index = longt(graph.edge_index)
     edge_attr = longt(graph.edge_attrs)
     anchors = longt(graph.roots)
     _word_ids, _word_starts = list(zip(*graph.words))

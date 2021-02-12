@@ -1,13 +1,15 @@
 from ..typing import Dict, List, Tuple
+import numpy as np
 import pickle
 import spacy
 
 
 class Tokenizer:
     def __init__(self, atom_map: Dict[str, int], word_tokenizer: str):
-        assert word_tokenizer in {'bert', 'robert'}
+        assert word_tokenizer in {'bert', 'robert', 'spacy'}
         self.atom_map = atom_map
         self.inv_atom_map = {v: k for k, v in self.atom_map.items()}
+        self.name = word_tokenizer
         if word_tokenizer in {'bert', 'robert'}:
             self.word_tokenizer = BertWrapper(word_tokenizer)
         elif word_tokenizer == 'spacy':
@@ -16,7 +18,7 @@ class Tokenizer:
     def atoms_to_ids(self, atoms: List[str]) -> List[int]:
         return [self.atom_map[a] for a in atoms]
 
-    def ids_to_atms(self, ids: List[int]) -> List[str]:
+    def ids_to_atoms(self, ids: List[int]) -> List[str]:
         return [self.inv_atom_map[i] for i in ids]
 
     def words_to_ids(self, words: List[str]) -> List[Tuple[int, bool]]:
@@ -26,8 +28,8 @@ class Tokenizer:
         return self.word_tokenizer.ids_to_words(ids)
 
 
-def load_tokenizer(path: str = './tokenizer.p') -> Tokenizer:
-    with open(path, 'rb') as f:
+def load_tokenizer(which: str) -> Tokenizer:
+    with open(f'./Graphs/io/{which}/tokenizer.p', 'rb') as f:
         return pickle.load(f)
 
 
@@ -62,3 +64,7 @@ class SpacyWrapper:
 
     def ids_to_words(self, ids: List[int]):
         raise NotImplementedError
+
+    def get_embedding_table(self) -> np.array:
+        vectors = self.model.vocab.vectors.data
+        return np.concatenate([vectors, np.zeros((1, 300))])

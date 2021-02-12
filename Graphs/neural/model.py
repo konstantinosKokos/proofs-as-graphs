@@ -1,27 +1,56 @@
-from torch_geometric.nn import TransformerConv, MessagePassing, global_mean_pool, global_max_pool
+from torch_geometric.nn import TransformerConv, MessagePassing
 from torch_geometric.utils import to_dense_batch, softmax
-from ..typing import Tensor, Dict, Tuple, array
+from torch.nn.functional import dropout
+from ..typing import Tensor, Tuple, PairTensor
+from ..data.tokenizer import Tokenizer
 from ..neural.embedding import InvertibleEmbedder
-from ..neural.encoders.lstm import Vanilla
-from torch.nn import Module, ModuleList, Linear, Sequential, Dropout, GELU, Embedding
+from ..neural.encoders import Encoder
+from math import sqrt
+
+from torch.nn import Module, ModuleList, Linear, Sequential, Dropout, GELU, Embedding, GRUCell
 from torch import cat, save, bmm
 
 
+class TransConv(MessagePassing):
+    def __init__(self, input_dim: int, output_dim: int, edge_types: int, dropout_rate: float, num_heads: int = 1):
+        super(TransConv, self).__init__(aggr='add', node_dim=0)
+        self.q_projection = Linear(input_dim, output_dim, False)
+        self.k_projection = Linear(input_dim, output_dim, False)
+        self.v_projection = Linear(input_dim, output_dim, False)
+        self.e_projection = Embedding(edge_types, output_dim)
+        self.num_heads = num_heads
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.edge_types = edge_types
+        self.dropout = dropout_rate
+
+    def forward(self, x: Tensor, edge_index: Tensor, edge_attr: Tensor):
+        x: PairTensor = (x, x)
+        # propagate_type: (x: PairTensor, edge_attr: Tensor)
+        out = self.propagate(edge_index=edge_index, x=x, edge_attr=edge_attr, size=None)
+        out = out.view(-1, self.num_heads * self.output_dim)
+        return out
+
+    def message(self, x_i: Tensor, x_j: Tensor, edge_attr: Tensor, index: Tensor, ptr: Tensor, size_i: int) -> Tensor:
+        queries = self.q_projection(dropout(x_i, self.dropout, self.training)).view(-1, self.num_heads, self.output_dim)
+        keys = self.k_projection(dropout(x_j, self.dropout, self.training)).view(-1, self.num_heads, self.output_dim)
+        values = self.v_projection(dropout(x_j, self.dropout, self.training)).view(-1, self.num_heads, self.output_dim)
+        edges = self.e_projection(edge_attr).view(-1, self.num_heads, self.output_dim)
+        atn = softmax((queries*(keys+edges)).sum(dim=-1) / sqrt(self.output_dim), index, ptr, size_i)
+        return atn.view(-1, self.num_heads, 1) * values
+
+
 class Base(Module):
-    def __init__(self, atom_map: Dict[str, int], num_layers: int, device: str = 'cuda'):
+    def __init__(self, num_atoms: int, num_layers: int, device: str = 'cuda'):
         super(Base, self).__init__()
         ndim = 64
-        edim = 12
-        self.atom_embedding = InvertibleEmbedder(len(atom_map), ndim).to(device)
-        self.edge_embedding = Embedding(3, edim).to(device)
-        self.r2c = ModuleList([TransformerConv(ndim, ndim, edge_dim=edim) for _ in range(num_layers)]).to(device)
-        self.c2r = ModuleList([TransformerConv(ndim, ndim, edge_dim=edim) for _ in range(num_layers)]).to(device)
-        self.aggr = Sequential(Linear(ndim * 2, ndim), GELU()).to(device)
-        # self.word_encoder = Vanilla(300, 256, gdim, embedding_table).to(device)
+        self.atom_embedding = InvertibleEmbedder(num_atoms, ndim).to(device)
+        self.r2c = ModuleList([TransConv(ndim, ndim, 3, 0.15) for _ in range(num_layers)]).to(device)
+        self.c2r = ModuleList([TransConv(ndim, ndim, 3, 0.15) for _ in range(num_layers)]).to(device)
+        self.aggr = ModuleList([Sequential(Linear(ndim * 2, ndim), GELU()) for _ in range(num_layers)]).to(device)
         self.num_layers = num_layers
-        self.atom_map = atom_map
         self.device = device
-        self.dropout = Dropout(0.5)
+        self.dropout = Dropout(0.15)
 
     def embed_atoms(self, atoms: Tensor) -> Tensor:
         return self.atom_embedding.embed(atoms).squeeze(1)
@@ -38,11 +67,11 @@ class Base(Module):
 
     def contextualize_nodes(self, atoms: Tensor, edge_index: Tensor, edge_ids: Tensor) -> Tensor:
         vectors = self.dropout(self.embed_nodes(atoms))
-        edge_attr = self.edge_embedding(edge_ids)
         for hop in range(self.num_layers):
-            r2c = self.r2c[hop](x=vectors, edge_index=edge_index, edge_attr=edge_attr)
-            c2r = self.c2r[hop](x=vectors, edge_index=edge_index.flip(0), edge_attr=edge_attr)
-            vectors = self.aggr(self.dropout(cat((r2c, c2r), dim=-1)))
+            r2c = self.r2c[hop](x=vectors, edge_attr=edge_ids, edge_index=edge_index)
+            c2r = self.c2r[hop](x=vectors, edge_attr=edge_ids, edge_index=edge_index.flip(0))
+            # vectors = r2c + c2r + vectors
+            vectors = self.aggr[hop](self.dropout(cat((r2c + vectors, c2r), dim=-1)))
         return vectors
 
     def save(self, path: str) -> None:
@@ -50,56 +79,41 @@ class Base(Module):
 
 
 class PairClassifier(Module):
-    def __init__(self, base: Base, table: array):
+    def __init__(self, base: Base, tokenizer: Tokenizer):
         super(PairClassifier, self).__init__()
         self.base = base
-        self.word_encoder = Vanilla(word_dim=300, hidden_dim=256, graph_dim=64, embedding_table=table).to(base.device)
-        self.expander = Sequential(Linear(64, 256), GELU(), Dropout(0.5), Linear(256, 512)).to(base.device)
-        self.collapser = Sequential(Linear(3 * 512, 256), GELU(), Dropout(0.5)).to(base.device)
+        self.tokenizer = tokenizer
+        self.word_encoder = Encoder(tokenizer, base.device)
+        self.collapser = Sequential(Linear(2 * 512, 256), GELU(), Dropout(0.5)).to(base.device)
         self.combiner = Sequential(Linear(256 * 4, 256), GELU(), Dropout(0.5), Linear(256, 3)).to(base.device)
+        self.dropout = Dropout(0.5)
 
     def readout(self, atoms: Tensor, edge_index: Tensor, edge_ids: Tensor, word_pos: Tensor, word_batch: Tensor,
                 word_ids: Tensor, word_starts: Tensor) -> Tuple[Tensor, Tensor]:
         node_reprs = self.base.contextualize_nodes(atoms, edge_index, edge_ids)[word_pos]
-        # atn = softmax(self.expander(node_reprs), word_batch[word_starts.eq(1)])
-        words, ids = to_dense_batch(word_ids, word_batch)
-        ctx = self.word_encoder(words)[ids][word_starts.eq(1)]
+        words, ids = to_dense_batch(word_ids, word_batch, fill_value=self.word_encoder.pad_value)
+        ctx = self.dropout(self.word_encoder(words)[ids][word_starts.eq(1)])
         ctx, _ = to_dense_batch(ctx, word_batch[word_starts.eq(1)])
         node_reprs, _ = to_dense_batch(node_reprs, word_batch[word_starts.eq(1)])
         return ctx, node_reprs
 
-    def entail(self, ctx_h: Tensor, n_h: Tensor, ctx_p: Tensor, n_p: Tensor):
+    def entail(self, ctx_h: Tensor, n_h: Tensor, ctx_p: Tensor, n_p: Tensor) -> Tuple[Tensor, Tensor]:
         cross_atn = bmm(n_h, n_p.permute(0, 2, 1))
+        mask_h = n_h.sum(dim=-1, keepdim=True).eq(0).repeat(1, 1, n_p.shape[1])
+        mask_p = n_p.sum(dim=-1).eq(0).unsqueeze(1).repeat(1, n_h.shape[1], 1)
+        mask = mask_h.bitwise_or(mask_p)
+        cross_atn[mask] = -1e10
         ctx_hp = bmm(cross_atn.softmax(dim=1).permute(0, 2, 1), ctx_h)
         ctx_ph = bmm(cross_atn.softmax(dim=2), ctx_p)
-        ctx_h = self.collapser(cat((ctx_h, ctx_h - ctx_ph, ctx_h * ctx_ph), dim=-1))
-        ctx_p = self.collapser(cat((ctx_p, ctx_p - ctx_hp, ctx_p * ctx_hp), dim=-1))
+        ctx_h = ctx_h + ctx_ph
+        ctx_p = ctx_p + ctx_hp
+
+        ctx_h = self.collapser(cat((ctx_h - ctx_ph, ctx_h * ctx_ph), dim=-1))
+        ctx_p = self.collapser(cat((ctx_p - ctx_hp, ctx_p * ctx_hp), dim=-1))
         ctx_h = cat((ctx_h.max(dim=1)[0], ctx_h.mean(dim=1)), -1)
         ctx_p = cat((ctx_p.max(dim=1)[0], ctx_p.mean(dim=1)), -1)
-        return self.combiner(cat((ctx_h, ctx_p), dim=-1))
+        return self.combiner(cat((ctx_h, ctx_p), dim=-1)), cross_atn
 
     def save(self, path: str) -> None:
         save({'model_state_dict': self.state_dict()}, path)
 
-
-# class PairClassifier(Module):
-#     def __init__(self, base: Base, device: str):
-#         super(PairClassifier, self).__init__()
-#         dim = 512
-#         self.base = base
-#         self.combiner = Sequential(Linear(dim*8, dim*2), GELU(), Dropout(0.5), Linear(dim*2, 3)).to(device)
-#         self.projector = Sequential(Linear(32, 256, False), GELU(), Dropout(0.5), Linear(256, 512, False)).to(device)
-#         self.device = device
-#
-#     def readout(self, atoms: Tensor, words: Tensor, w_pos: Tensor, w_batch: Tensor, w_starts: Tensor,
-#                 concs: Tensor, edge_index: Tensor, batch: Tensor) -> Tensor:
-#         atn_vectors = self.base.contextualize_nodes(atoms, words, w_pos, w_batch, w_starts, edge_index)
-#         atn_vectors = softmax(self.projector(atn_vectors), w_batch)
-#         ctx_vectors = self.base.embed_words(words, w_batch, w_starts)
-#         out_vectors = atn_vectors * ctx_vectors
-#         return cat((global_add_pool(out_vectors, w_batch), global_mean_pool(out_vectors, w_batch)), dim=-1)
-#
-#     def entail(self, x1: Tensor, x2: Tensor):
-#         x = cat((x1, x2, x1 * x2, x1 - x2), dim=-1)
-#         return self.combiner(x)
-#

@@ -1,5 +1,6 @@
 from torch import Tensor
 from torch_geometric.data import Data, Batch, DataLoader
+from torch_geometric.typing import Adj, PairTensor
 from torch.nn import Module
 from torch.optim import Optimizer
 
@@ -15,6 +16,8 @@ Epoch = Dict[str, List]
 
 
 class OptLike(Protocol):
+    lr: float
+
     def step(self) -> None:
         ...
 
@@ -77,9 +80,9 @@ Graph = Dict[Node, Set[Edge]]
 
 
 class GraphData(NamedTuple, Generic[T0, T1]):
-    nodes: List[T0]                             # A list of token labels
-    edges: Tuple[List[int], List[int]]          # Edge_index in COO format
+    nodes: List[T0]                            # A list of node tokens
+    edge_index: Tuple[List[int], List[int]]    # Edge_index in COO format
     edge_attrs: List[T0]                       # A list of edge labels
-    roots: List[int]                            # A list of pointers to type anchors
-    conclusion: int                             # A pointer to the conclusion atom
-    words: List[T1]                             # A list of words
+    roots: List[int]                           # A list of pointers to type anchors
+    conclusion: int                            # A pointer to the conclusion atom
+    words: List[T1]                            # A list of word tokens

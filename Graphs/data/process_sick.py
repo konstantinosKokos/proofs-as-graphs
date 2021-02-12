@@ -4,9 +4,6 @@ from ..typing import Dict
 from LassyExtraction.aethel import ProofNet
 import pickle
 
-print('Loading tokenizer..')
-tokenizer = load_tokenizer()
-
 
 def parsable(pn: ProofNet) -> bool:
     try:
@@ -17,7 +14,9 @@ def parsable(pn: ProofNet) -> bool:
         return False
 
 
-def proc_sick(data_file: str = './everything.p'):
+def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy'):
+    print('Loading tokenizer..')
+    tokenizer = load_tokenizer(encoder)
 
     label_map = {'ENTAILMENT': 0, 'NEUTRAL': 1, 'CONTRADICTION': 2}
     print('Loading file..')
@@ -55,11 +54,11 @@ def get_fixed_labels(data_file: str = './SICK_whole_corpus_reannotated.csv') -> 
     return ret
 
 
-def save_sick(proc_file: str = './processed_sick.p'):
-    with open(proc_file, 'wb') as f:
-        pickle.dump(proc_sick(), f)
+def save_sick(encoder: str):
+    with open(f'Graphs/io/{encoder}/processed_sick.p', 'wb') as f:
+        pickle.dump(proc_sick(encoder), f)
 
 
-def load_sick(proc_file: str = './processed_sick.p'):
-    with open(proc_file, 'rb') as f:
+def load_sick(encoder: str):
+    with open(f'Graphs/io/{encoder}/processed_sick.p', 'rb') as f:
         return pickle.load(f)
