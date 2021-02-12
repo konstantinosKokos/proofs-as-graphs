@@ -1,11 +1,11 @@
-from ..data.preprocessing import proofnet_to_graphdata, tokenize_data
-from ..data.process_lassy import load_lassy
+from .preprocessing import proofnet_to_graphdata, tokenize_data
+from .tokenizer import Tokenizer, load_tokenizer
 from ..typing import Dict
 from LassyExtraction.aethel import ProofNet
 import pickle
 
-print('Loading atom map..')
-_, atom_map, _ = load_lassy()
+print('Loading tokenizer..')
+tokenizer = load_tokenizer()
 
 
 def parsable(pn: ProofNet) -> bool:
@@ -18,18 +18,18 @@ def parsable(pn: ProofNet) -> bool:
 
 
 def proc_sick(data_file: str = './everything.p'):
-    from ..data.spacy_vectors import word_map
 
     label_map = {'ENTAILMENT': 0, 'NEUTRAL': 1, 'CONTRADICTION': 2}
     print('Loading file..')
     with open(data_file, 'rb') as f:
         _sents, samples, a_nets, n_nets = pickle.load(f)
-    available_nets = [list(filter(parsable, sum(ns, [])))[:1] for ns in zip(a_nets, n_nets)]
+    available_nets = [list(filter(parsable, sum(ns, [])))[:1] for ns in zip(n_nets, a_nets)]
     fixed_labels = get_fixed_labels()
     print('Making graphs..')
     available_graphs = [[proofnet_to_graphdata(pn) for pn in sent] for sent in available_nets]
     print('Tokenizing graphs..')
-    tokenized = [[tokenize_data(g, atom_map, word_map) for g in subset] for subset in available_graphs]
+    tokenized = [[tokenize_data(g, tokenizer.atoms_to_ids, tokenizer.words_to_ids) for g in subset]
+                 for subset in available_graphs]
     train, dev, test = [], [], []
     label_counts = [0, 0, 0]
     for idx, sent_a, sent_b, _, subset in samples:

@@ -10,16 +10,12 @@ from LassyExtraction.aethel import AxiomLinks, ProofNet
 lex, arg, res = 'lex', 'arg', 'res'
 
 
-def get_nodes(graph: Graph) -> Set[Node]:
-    return set(graph.keys()).union(*[find_targets(graph, k) for k in graph.keys()])
-
-
-def tokenize_data(untokenized: GraphData, atom_map: Dict[str, int],
+def tokenize_data(untokenized: GraphData, atom_map: Callable[[List[str]], List[int]],
                   word_map: Callable[[List[str]], List[Tuple[int, bool]]]) -> GraphData:
     edge_map = {lex: 0, arg: 1, res: 2}
-    atom_ids = [atom_map[atom] for atom in untokenized.nodes]
+    atom_ids = atom_map(untokenized.nodes)
     ids_and_starts = word_map(untokenized.words)
-    return GraphData(words=ids_and_starts, nodes=atom_ids, edges=untokenized.edges,
+    return GraphData(words=ids_and_starts, nodes=atom_ids, edge_index=untokenized.edge_index,
                      conclusion=untokenized.conclusion, roots=untokenized.roots,
                      edge_attrs=[edge_map[edge] for edge in untokenized.edge_attrs])
 
@@ -50,8 +46,12 @@ def proofnet_to_graphdata(proofnet: ProofNet) -> GraphData:
         attrs.extend([e for _, e in vs])
 
     return GraphData(nodes=['[PAD]' if isinstance(node, WNode) else node.label for node in nodes],
-                     edges=(srcs, tgts), words=words,  roots=sorted([node_dict[lanc.index] for lanc in lex_anchors]),
-                     edge_attrs=attrs, conclusion=node_dict[cnode.index])
+                     edge_index=(srcs, tgts), words=words, edge_attrs=attrs, conclusion=node_dict[cnode.index],
+                     roots=sorted([node_dict[lanc.index] for lanc in lex_anchors]))
+
+
+def get_nodes(graph: Graph) -> Set[Node]:
+    return set(graph.keys()).union(*[find_targets(graph, k) for k in graph.keys()])
 
 
 def find_by_jidx(graph: Graph, j_idx: int) -> Node:
