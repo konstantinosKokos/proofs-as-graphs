@@ -2,6 +2,9 @@ from .preprocessing import proofnet_to_graphdata, tokenize_data
 from .tokenizer import Tokenizer, load_tokenizer
 from ..typing import Dict
 from LassyExtraction.aethel import ProofNet
+
+from itertools import product
+
 import pickle
 
 
@@ -22,7 +25,7 @@ def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy'):
     print('Loading file..')
     with open(data_file, 'rb') as f:
         _sents, samples, a_nets, n_nets = pickle.load(f)
-    available_nets = [list(filter(parsable, sum(ns, [])))[:1] for ns in zip(n_nets, a_nets)]
+    available_nets = [list(filter(parsable, sum(ns, []))) for ns in zip(n_nets, a_nets)]
     fixed_labels = get_fixed_labels()
     print('Making graphs..')
     available_graphs = [[proofnet_to_graphdata(pn) for pn in sent] for sent in available_nets]
@@ -36,10 +39,13 @@ def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy'):
         graphs_a, graphs_b, label, subset = tokenized[sent_a], tokenized[sent_b], label_map[label], subset.rstrip('\n')
         if not graphs_a or not graphs_b:
             continue
-        label_counts[label] += 1
-        graph_a, graph_b = graphs_a[0], graphs_b[0]
+        combinations = product(graphs_a, graphs_b)
         add_to = train if subset == 'TRAIN' else dev if subset == 'TRIAL' else test
-        add_to.append((graph_a, graph_b, label))
+        for graph_a, graph_b in combinations:
+            label_counts[label] += 1
+            add_to.append((graph_a, graph_b, label))
+            if add_to == test:
+                break
     print(f'Label counts: {label_counts}')
     return train, dev, test
 
@@ -56,7 +62,7 @@ def get_fixed_labels(data_file: str = './SICK_whole_corpus_reannotated.csv') -> 
 
 def save_sick(encoder: str):
     with open(f'Graphs/io/{encoder}/processed_sick.p', 'wb') as f:
-        pickle.dump(proc_sick(encoder), f)
+        pickle.dump(proc_sick(encoder=encoder), f)
 
 
 def load_sick(encoder: str):

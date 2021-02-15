@@ -1,5 +1,6 @@
 from transformers import RobertaModel, BertModel
 from torch.nn import LSTM
+from torch.nn.functional import dropout
 from ..data.tokenizer import Tokenizer
 from .embedding import from_table
 from ..typing import Module, Tensor
@@ -25,12 +26,11 @@ class LSTMWrapper(Module):
         super(LSTMWrapper, self).__init__()
         self.embedding = from_table(tokenizer.word_tokenizer.get_embedding_table(), False).to(device)
         self.lstm = LSTM(input_size=tokenizer.word_tokenizer.dim, hidden_size=256, bidirectional=True,
-                         num_layers=2, batch_first=True, dropout=0.5).to(device)
+                         num_layers=1, batch_first=True, dropout=0.5).to(device)
 
     def forward(self, word_ids: Tensor) -> Tensor:
-        ctx, _ = self.lstm(self.embedding(word_ids))
+        ctx, _ = self.lstm(dropout(self.embedding(word_ids), 0.5, self.training))
         return ctx
-
 
 
 class BertWrapper(Module):
@@ -42,7 +42,6 @@ class BertWrapper(Module):
             self.core = BertModel.from_pretrained("wietsedv/bert-base-dutch-cased").to(device)
         self.pad_value = tokenizer.word_tokenizer.core.pad_token_id
         self.device = device
-
 
     def make_mask(self, inps: Tensor, padding_id: int) -> Tensor:
         mask = ones_like(inps)

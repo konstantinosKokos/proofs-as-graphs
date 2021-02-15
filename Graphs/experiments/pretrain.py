@@ -7,9 +7,9 @@ from ..neural.utils.schedules import save_if_best
 
 
 def mask_and_predict(model: Base, batch: Batch, mask_chance: float, ) -> Tuple[Tensor, Tensor]:
-    amask = make_mask(batch.x, mask_chance, model.atom_map['[PAD]'])
+    amask = make_mask(batch.x, mask_chance, model.tokenizer.atom_map['[PAD]'])
     truths = batch.x[amask.eq(1)].squeeze(-1)
-    atoms = where(amask.eq(1), model.atom_map['[MASK]'], batch.x)
+    atoms = where(amask.eq(1), model.tokenizer.atom_map['[MASK]'], batch.x)
 
     amask = amask.squeeze(-1)
     vectors = model.contextualize_nodes(atoms=atoms, edge_index=batch.edge_index, edge_ids=batch.edge_attr)

@@ -12,8 +12,7 @@ from torch.optim import AdamW, Adam
 def init_train(which: str) -> Tuple[Tuple[DataLoader, DataLoader, DataLoader], PairClassifier, TrainLogger]:
     _, base, _ = init_pretrain(which)
     # base = load_pretrained(base)
-    tokenizer = load_tokenizer(which)
-    model = PairClassifier(base, tokenizer)
+    model = PairClassifier(base)
     train, dev, test = load_sick(which)
     train_dl = pair_loader([graphs_to_data(*sample) for sample in train], 32, True)
     dev_dl = pair_loader([graphs_to_data(*sample) for sample in dev], 64, False)
@@ -30,7 +29,7 @@ def main(which: str):
     (train_dl, dev_dl, test_dl), model, logger = init_train(which)
     for i in range(500):
         print(f' === {i} === ')
-        log_epoch(model=model, dataloader=train_dl, logger=logger, train=True, pause=i > 5)
+        log_epoch(model=model, dataloader=train_dl, logger=logger, train=True, pause=False)
         print(logger.aggr_last_epoch(True))
         log_epoch(model=model, dataloader=test_dl, logger=logger, train=False, pause=False)
         print(logger.aggr_last_epoch(False))
