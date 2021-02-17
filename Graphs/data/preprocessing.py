@@ -30,7 +30,7 @@ def proofnet_to_graphdata(proofnet: ProofNet) -> GraphData:
     words = proofnet.proof_frame.get_words()
     types = proofnet.proof_frame.get_types()
     graph = defaultdict(lambda: set())
-    lex_anchors, cnode = add_types(graph, words, types, proofnet.proof_frame.conclusion)
+    lex_anchors, cnode = add_types(graph, words, types, proofnet.proof_frame.conclusion, False)
     cnode = add_axiom_links(graph, cnode, proofnet.axiom_links)
     binarize_modalities(graph)
     merge_multi_crd(graph, lex_anchors)
@@ -107,16 +107,24 @@ def binarize_modalities(graph: Graph) -> None:
             graph[source].add(Edge(modality, lex if isinstance(source, WNode) else label))
 
 
-def add_types(graph: Graph, words: List[str], wordtypes: List[WordType], conclusion: PolarizedType) \
-        -> Tuple[List[WNode], ANode]:
+def add_types(graph: Graph, words: List[str], wordtypes: List[WordType], conclusion: PolarizedType,
+              type_anchors: bool) \
+        -> Tuple[List[Node], ANode]:
+
+    def make_anchor(_w: str, _wt: WordType) -> Node:
+        if type_anchors:
+            raise NotImplementedError
+            # return ANode(next(counter), label=str(_wt), polarity=True, j_idx=-1)
+        return WNode(next(counter), _w)
+
     counter = count()
     wordtypes = list(map(collate_type, wordtypes))
     lex_anchors = []
     for word, wordtype in zip(words, wordtypes):
-        wnode = WNode(next(counter), word)
-        lex_anchors.append(wnode)
+        anchor = make_anchor(word, wordtype)
+        lex_anchors.append(anchor)
         root = add_type(graph, wordtype, counter)
-        graph[wnode].add(Edge(root, lex))
+        graph[anchor].add(Edge(root, lex))
     conc = ANode(next(counter), label=conclusion.depolarize().type, polarity=False, j_idx=conclusion.index)
     graph[conc] = set()
     return lex_anchors, conc
@@ -154,21 +162,30 @@ def add_type(graph: Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
     return root
 
 
-def merge_multi_crd(graph: Graph, anchors: List[Node]):
-    def daughter(_anchor: Node) -> Node:
-        tgts = find_targets(graph, _anchor)
-        assert len(tgts) == 1
-        return list(tgts)[0]
+def daughter(graph: Graph, anchor: Node) -> Node:
+    tgts = find_targets(graph, anchor)
+    assert len(tgts) == 1
+    return list(tgts)[0]
 
+
+def merge_multi_crd(graph: Graph, anchors: List[Node]):
     empties = []
     for anchor in reversed(anchors):
-        root = daughter(anchor)
+        root = daughter(graph, anchor)
         if root.label == '_':
             empties.append(root)
         if root.label == 'cnj' and empties:
             empty = empties.pop()
-            cnj = daughter(root)
+            cnj = daughter(graph, root)
             graph[empty].add(Edge(cnj, lex))
+
+
+def remove_anchors(graph: Graph, anchors: List[Node]) -> List[Node]:
+    ret = []
+    for anchor in anchors:
+        ret.append(daughter(graph, anchor))
+        del graph[anchor]
+    return ret
 
 
 def collate_atom(atom: str) -> str:

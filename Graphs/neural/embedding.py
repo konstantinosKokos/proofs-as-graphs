@@ -1,5 +1,5 @@
 from ..typing import array, Union, Tensor, Module
-from torch import rand, tensor, float32
+from torch import zeros, tensor, float32
 from torch.nn import Parameter, Embedding
 from torch.nn.functional import embedding, linear
 from torch.nn.init import xavier_normal_
@@ -8,7 +8,7 @@ from torch.nn.init import xavier_normal_
 class InvertibleEmbedder(Module):
     def __init__(self, num_embeddings: int, embedding_dim: int):
         super(InvertibleEmbedder, self).__init__()
-        data = rand(num_embeddings, embedding_dim)
+        data = zeros(num_embeddings, embedding_dim)
         xavier_normal_(data[1:])
         self.table = Parameter(data=data, requires_grad=True)
 

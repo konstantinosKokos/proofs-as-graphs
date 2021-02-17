@@ -21,7 +21,7 @@ def proc_lassy(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4
 
 
 def save_lassy(encoder: str):
-    tokenized, tokenizer = proc_lassy()
+    tokenized, tokenizer = proc_lassy(encoder=encoder)
     with open(f'Graphs/io/{encoder}/processed_lassy.p', 'wb') as f:
         pickle.dump(tokenized, f)
     with open(f'Graphs/io/{encoder}/tokenizer.p', 'wb') as f:

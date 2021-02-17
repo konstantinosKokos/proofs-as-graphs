@@ -28,7 +28,7 @@ def load_pretrained(model: Base, path: str = './stored_models/pretrain.model') -
 
 def main(encoder: str = 'spacy'):
     (train_dl, dev_dl, test_dl), model, logger = init_pretrain(encoder)
-    mask_chance = 0.25
+    mask_chance = 0.5
     for i in range(200):
         print(f' === {i} === ')
         log_epoch(model=model, dataloader=train_dl, mask_chance=mask_chance, logger=logger, train=True)
