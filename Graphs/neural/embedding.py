@@ -19,10 +19,10 @@ class InvertibleEmbedder(Module):
         return linear(weights, self.table)
 
 
-def from_table(table: Union[array, Tensor], frozen: bool) -> Embedding:
+def from_table(table: Union[array, Tensor], frozen: bool, pad_id: int) -> Embedding:
     ne, ed = table.shape
-    embedder = Embedding(ne, ed, padding_idx=0)
+    embedder = Embedding(ne, ed, padding_idx=pad_id)
     embedder.weight.data = tensor(table).to(float32)
-    embedder.weight.data[0] = 0.
+    embedder.weight.data[pad_id] = 0.
     embedder.requires_grad_(not frozen)
     return embedder

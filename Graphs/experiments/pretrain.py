@@ -12,7 +12,9 @@ def mask_and_predict(model: Base, batch: Batch, mask_chance: float, ) -> Tuple[T
     atoms = where(amask.eq(1), model.tokenizer.atom_map['[MASK]'], batch.x)
 
     amask = amask.squeeze(-1)
-    vectors = model.contextualize_nodes(atoms=atoms, edge_index=batch.edge_index, edge_ids=batch.edge_attr)
+    vectors = model.contextualize_nodes(atoms=atoms, edge_index=batch.edge_index, edge_ids=batch.edge_attr,
+                                        word_batch=batch.word_ids_batch, word_ids=batch.word_ids,
+                                        word_pos=batch.word_pos, word_starts=batch.word_starts)
     predictions = model.classify_nodes(vectors[amask.eq(1)])
     return predictions, truths
 

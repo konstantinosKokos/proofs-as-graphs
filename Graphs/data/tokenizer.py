@@ -2,6 +2,7 @@ from ..typing import Dict, List, Tuple
 import numpy as np
 import pickle
 import spacy
+from warnings import warn
 
 
 class Tokenizer:
@@ -11,17 +12,24 @@ class Tokenizer:
         self.inv_atom_map = {v: k for k, v in self.atom_map.items()}
         self.name = word_tokenizer
         if word_tokenizer in {'bert', 'robert'}:
-            self.word_tokenizer = BertWrapper(word_tokenizer)
+            self.word_tokenizer = BertTWrapper(word_tokenizer)
         elif word_tokenizer == 'spacy':
-            self.word_tokenizer = SpacyWrapper(spacy.load('nl_core_news_lg'))
+            self.word_tokenizer = SpacyTWrapper(spacy.load('nl_core_news_lg'))
 
     def atoms_to_ids(self, atoms: List[str]) -> List[int]:
-        return [self.atom_map[a] for a in atoms]
+        try:
+            return [self.atom_map[a] for a in atoms]
+        except KeyError:
+            unks = filter(lambda a: a not in self.atom_map.keys(), atoms)
+            for unk in unks:
+                warn(f'Adding new atom {unk} to the atom map')
+                self.atom_map[unk] = len(self.atom_map)
+            return self.atoms_to_ids(atoms)
 
     def ids_to_atoms(self, ids: List[int]) -> List[str]:
         return [self.inv_atom_map[i] for i in ids]
 
-    def words_to_ids(self, words: List[str]) -> List[Tuple[int, bool]]:
+    def words_to_ids(self, words: List[Tuple[str, bool]]) -> List[Tuple[int, bool]]:
         return self.word_tokenizer.words_to_ids(words)
 
     def ids_to_words(self, ids: List[int]) -> List[str]:
@@ -33,7 +41,7 @@ def load_tokenizer(which: str) -> Tokenizer:
         return pickle.load(f)
 
 
-class BertWrapper:
+class BertTWrapper:
     def __init__(self, model: str):
         if model == 'bert':
             from transformers import BertTokenizer
@@ -52,19 +60,21 @@ class BertWrapper:
         return self.core.convert_ids_to_tokens(ids, True)
 
 
-class SpacyWrapper:
+class SpacyTWrapper:
     def __init__(self, model: spacy.language.Language):
         self.model = model
         self.unk, self.dim = self.model.vocab.vectors.data.shape
+        self.pad_value = self.unk + 1
 
-    def words_to_ids(self, words: List[str]) -> List[Tuple[int, bool]]:
+    def words_to_ids(self, words: List[Tuple[str, bool]]) -> List[Tuple[int, bool]]:
+        words, masks = list(zip(*words))
         docs = self.model.pipe(words, disable=['parser', 'tagger', 'ner'])
-        return [(token.lex_id if token.has_vector else self.unk, i == (len(tokens) - 1))
-                for tokens in docs for i, token in enumerate(tokens)]
+        return [(token.lex_id if token.has_vector else self.unk, i == (len(tokens) - 1) and not mask)
+                for tokens, mask in zip(docs, masks) for i, token in enumerate(tokens)]
 
     def ids_to_words(self, ids: List[int]):
         raise NotImplementedError
 
     def get_embedding_table(self) -> np.array:
         vectors = self.model.vocab.vectors.data
-        return np.concatenate([vectors, np.zeros((1, 300))])
+        return np.concatenate([vectors, np.random.rand(1, 300), np.zeros((1, 300))])

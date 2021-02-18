@@ -1,5 +1,5 @@
 from .preprocessing import proofnet_to_graphdata, tokenize_data
-from .tokenizer import Tokenizer, load_tokenizer
+from .tokenizer import load_tokenizer
 from ..typing import Dict
 from LassyExtraction.aethel import ProofNet
 
@@ -30,7 +30,7 @@ def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy'):
     print('Making graphs..')
     available_graphs = [[proofnet_to_graphdata(pn) for pn in sent] for sent in available_nets]
     print('Tokenizing graphs..')
-    tokenized = [[tokenize_data(g, tokenizer.atoms_to_ids, tokenizer.words_to_ids) for g in subset]
+    tokenized = [[tokenize_data(g, tokenizer.atoms_to_ids, tokenizer.words_to_ids) for g in subset if g is not None]
                  for subset in available_graphs]
     train, dev, test = [], [], []
     label_counts = [0, 0, 0]
@@ -39,14 +39,18 @@ def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy'):
         graphs_a, graphs_b, label, subset = tokenized[sent_a], tokenized[sent_b], label_map[label], subset.rstrip('\n')
         if not graphs_a or not graphs_b:
             continue
-        combinations = product(graphs_a, graphs_b)
+        label_counts[label] += 1
+        combinations = list(product(graphs_a, graphs_b))
         add_to = train if subset == 'TRAIN' else dev if subset == 'TRIAL' else test
         for graph_a, graph_b in combinations:
-            label_counts[label] += 1
-            add_to.append((graph_a, graph_b, label))
             if add_to == test:
+                add_to.append((graph_a, graph_b, label, 1.))
                 break
-    print(f'Label counts: {label_counts}')
+            add_to.append((graph_a, graph_b, label, 1 / len(combinations)))
+    print('Saving new tokenizer..')
+    with open(f'./Graphs/io/{encoder}/tokenizer.p', 'wb') as f:
+        pickle.dump(tokenizer, f)
+    print(f'{label_counts=}')
     return train, dev, test
 
 

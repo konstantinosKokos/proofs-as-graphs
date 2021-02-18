@@ -16,8 +16,6 @@ Epoch = Dict[str, List]
 
 
 class OptLike(Protocol):
-    lr: float
-
     def step(self) -> None:
         ...
 
@@ -45,22 +43,21 @@ class Node:
     index: int
     label: str
 
+    def __str__(self):
+        return self.label
+
     def __hash__(self):
         return self.index
 
 
 @dataclass
 class ANode(Node):
-    polarity: bool
-    j_idx: int
-
     def __hash__(self):
         return self.index
 
 
 @dataclass
 class CNode(Node):
-
     def __hash__(self):
         return self.index
 
@@ -84,5 +81,4 @@ class GraphData(NamedTuple, Generic[T0, T1]):
     edge_index: Tuple[List[int], List[int]]    # Edge_index in COO format
     edge_attrs: List[T0]                       # A list of edge labels
     roots: List[int]                           # A list of pointers to type anchors
-    conclusion: int                            # A pointer to the conclusion atom
     words: List[T1]                            # A list of word tokens

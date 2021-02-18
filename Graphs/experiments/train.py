@@ -8,11 +8,11 @@ from ..neural.utils.schedules import save_if_best
 def get_entailment_values(model: PairClassifier, batch: Batch, pause: bool) -> Tuple[Tensor, Tensor]:
     vectors_h = model.readout(atoms=batch.x_h, word_ids=batch.word_ids_h, word_pos=batch.word_pos_h,
                               word_batch=batch.word_ids_h_batch, word_starts=batch.word_starts_h,
-                              edge_index=batch.edge_index_h, edge_ids=batch.edge_attr_h)
+                              edge_index=batch.edge_index_h, edge_ids=batch.edge_attr_h, batch=batch.x_h_batch)
     vectors_p = model.readout(atoms=batch.x_p, word_ids=batch.word_ids_p, word_pos=batch.word_pos_p,
                               word_batch=batch.word_ids_p_batch, word_starts=batch.word_starts_p,
-                              edge_index=batch.edge_index_p, edge_ids=batch.edge_attr_p)
-    predictions, cross_atn = model.entail(*vectors_h, *vectors_p)
+                              edge_index=batch.edge_index_p, edge_ids=batch.edge_attr_p, batch=batch.x_p_batch)
+    predictions = model.entail(vectors_h, vectors_p)
     if pause:
         import pdb
         pdb.set_trace()
@@ -28,7 +28,7 @@ def log_epoch(model: PairClassifier, dataloader: DataLoader, logger: Logger, tra
     model.train(train)
     for batch in iter(dataloader):
         log_batch(model, batch, logger, train, pause=pause)
-    logger.register_epoch(train, save_if_best(lambda: model.save('./stored_models/train.model')))
+    logger.register_epoch(train, save_if_best(lambda: model.save(f'./Graphs/io/{model.base.tokenizer.name}/train.model')))
 
 
 class TrainLogger(Logger):

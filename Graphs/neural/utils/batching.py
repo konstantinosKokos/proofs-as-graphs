@@ -6,18 +6,17 @@ def longt(x: Union[List[int], Tuple[List[int], ...]]) -> Tensor:
     return torch.tensor(x, dtype=torch.long)
 
 
-def tensorize_graph(graph: GraphData) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+def tensorize_graph(graph: GraphData) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     node_labels = longt(graph.nodes)
     edge_index = longt(graph.edge_index)
     edge_attr = longt(graph.edge_attrs)
     anchors = longt(graph.roots)
     _word_ids, _word_starts = list(zip(*graph.words))
-    conc = longt([graph.conclusion])
-    return node_labels, edge_index, edge_attr, anchors, longt(_word_ids), longt(_word_starts), conc
+    return node_labels, edge_index, edge_attr, anchors, longt(_word_ids), longt(_word_starts)
 
 
 def graph_to_data(graph: GraphData) -> Data:
-    node_labels, edge_index, edge_attr, anchors, word_ids, word_starts, _ = tensorize_graph(graph)
+    node_labels, edge_index, edge_attr, anchors, word_ids, word_starts = tensorize_graph(graph)
     return ProofData(x=node_labels, word_ids=word_ids, word_starts=word_starts, edge_attr=edge_attr,
                      word_pos=anchors, edge_index=edge_index, y=node_labels.unsqueeze(-1))
 
@@ -47,9 +46,9 @@ class ProofData(Data):
 
 class ProofPair(Data):
     def __init__(self, edge_index_h: Tensor, x_h: Tensor, word_ids_h: Tensor, word_starts_h: Tensor,
-                 word_pos_h: Tensor, edge_attr_h: Tensor, conc_h: Tensor,
+                 word_pos_h: Tensor, edge_attr_h: Tensor,
                  edge_index_p: Tensor, x_p: Tensor, word_ids_p: Tensor, word_starts_p: Tensor, word_pos_p: Tensor,
-                 edge_attr_p: Tensor, conc_p: Tensor, y: Tensor):
+                 edge_attr_p: Tensor, y: Tensor, w: float):
         super(ProofPair, self).__init__()
         self.edge_index_h = edge_index_h
         self.edge_index_p = edge_index_p
@@ -62,10 +61,9 @@ class ProofPair(Data):
         self.word_pos_h = word_pos_h
         self.word_pos_p = word_pos_p
         self.y = y
-        self.conc_h = conc_h
-        self.conc_p = conc_p
         self.edge_attr_h = edge_attr_h
         self.edge_attr_p = edge_attr_p
+        self.w = w
 
     def __inc__(self, key, value):
         if key in {'edge_index_h', 'word_pos_h', 'conc_h'}:
@@ -75,16 +73,14 @@ class ProofPair(Data):
         return super(ProofPair, self).__inc__(key, value)
 
 
-def graphs_to_data(graph_h: GraphData, graph_p: GraphData, label: int) -> ProofPair:
-
-    node_labels_h, edge_index_h, edge_attr_h, anchors_h, word_ids_h, word_starts_h, conc_h = tensorize_graph(graph_h)
-    node_labels_p, edge_index_p, edge_attr_p, anchors_p, word_ids_p, word_starts_p, conc_p = tensorize_graph(graph_p)
+def graphs_to_data(graph_h: GraphData, graph_p: GraphData, label: int, w: float) -> ProofPair:
+    node_labels_h, edge_index_h, edge_attr_h, anchors_h, word_ids_h, word_starts_h = tensorize_graph(graph_h)
+    node_labels_p, edge_index_p, edge_attr_p, anchors_p, word_ids_p, word_starts_p = tensorize_graph(graph_p)
     return ProofPair(edge_index_h=edge_index_h, edge_index_p=edge_index_p,
                      word_ids_h=word_ids_h, word_ids_p=word_ids_p,
                      x_h=node_labels_h, x_p=node_labels_p, word_pos_h=anchors_h, word_pos_p=anchors_p,
                      word_starts_h=word_starts_h, word_starts_p=word_starts_p,
-                     edge_attr_h=edge_attr_h, edge_attr_p=edge_attr_p, conc_h=conc_h, conc_p=conc_p,
-                     y=longt([label]))
+                     edge_attr_h=edge_attr_h, edge_attr_p=edge_attr_p, y=longt([label]), w=w)
 
 
 def pair_loader(data_list: List[ProofPair], batch_size: int, shuffle: bool) -> DataLoader:
