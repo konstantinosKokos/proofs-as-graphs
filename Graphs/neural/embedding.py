@@ -9,11 +9,11 @@ class InvertibleEmbedder(Module):
     def __init__(self, num_embeddings: int, embedding_dim: int):
         super(InvertibleEmbedder, self).__init__()
         data = zeros(num_embeddings, embedding_dim)
-        xavier_normal_(data[1:])
+        xavier_normal_(data)
         self.table = Parameter(data=data, requires_grad=True)
 
     def embed(self, ids: Tensor) -> Tensor:
-        return embedding(ids, self.table, padding_idx=0)
+        return embedding(ids, self.table)
 
     def invert(self, weights: Tensor) -> Tensor:
         return linear(weights, self.table)

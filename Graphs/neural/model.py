@@ -1,27 +1,28 @@
 from torch_geometric.utils import to_dense_batch
 from torch_geometric.utils import softmax as sparse_softmax
-from torch_geometric.nn import global_max_pool
+from torch_geometric.nn import global_max_pool, global_mean_pool
 from ..typing import Tensor, Tuple
 from ..data.tokenizer import Tokenizer
 from ..neural.embedding import InvertibleEmbedder
 from ..neural.encoders import Encoder
-from ..neural.gnn import TConvWrapper
+from ..neural.gnn import TConvWrapper, BGraphConvWrapper
 from ..neural.mha import MultiHeadAttention
 
-from torch.nn import Module, Linear, Sequential, Dropout, Embedding, Tanh, LSTM, GELU, LayerNorm
+from torch.nn import Module, Linear, Sequential, Dropout, Embedding, Tanh, GRU, GELU, LayerNorm
 from torch.nn.functional import pad
 from torch import cat, save, bmm
 
 
 class Base(Module):
-    def __init__(self, tokenizer: Tokenizer, num_layers: int, device: str = 'cuda'):
+    def __init__(self, tokenizer: Tokenizer, num_layers: int, weight_sharing: bool, device: str = 'cuda'):
         super(Base, self).__init__()
         self.ndim = 128
-        self.enc_dim = 128
+        self.enc_dim = 256
         self.tokenizer = tokenizer
         self.atom_embedding = InvertibleEmbedder(len(tokenizer.atom_map), self.ndim).to(device)
         self.edge_embedding = Embedding(3, self.ndim).to(device)
-        self.gnn = TConvWrapper(self.ndim, self.ndim, num_layers, 4).to(device)
+        # self.gnn = BGraphConvWrapper(self.ndim, num_layers).to(device)
+        self.gnn = TConvWrapper(self.ndim, self.ndim, num_layers, 1, weight_sharing).to(device)
         self.word_encoder = Encoder(self.tokenizer, device, hidden_size=self.enc_dim)
         self.num_layers = num_layers
         self.device = device
@@ -45,11 +46,12 @@ class Base(Module):
         node_reprs = self.embed_nodes(atoms)
         edge_attr = self.embed_edges(edge_ids)
         words, ids = to_dense_batch(word_ids, word_batch, fill_value=self.word_encoder.pad_value)
-        w_reprs = self.word_encoder(words)[ids][word_starts.eq(1)]
-        node_reprs[word_pos] = w_reprs
-        node_reprs = self.gnn(node_reprs, edge_index, edge_attr)
-        node_reprs[word_pos] += w_reprs
-        return node_reprs
+        w_reprs = self.dropout(self.word_encoder(words)[ids])
+        w_reprs = global_mean_pool(w_reprs, word_starts.cumsum(0) - 1)
+        # node_reprs[word_pos] = self.dropout(w_reprs)
+        node_reprs = self.dropout(self.gnn(node_reprs, edge_index, edge_attr))
+        # node_reprs[word_pos] += w_reprs
+        return cat((node_reprs[word_pos], self.dropout(w_reprs)), dim=-1)
 
     def save(self, path: str) -> None:
         save({'model_state_dict': self.state_dict()}, path)
@@ -59,10 +61,10 @@ class PairClassifier(Module):
     def __init__(self, base: Base):
         super(PairClassifier, self).__init__()
         self.base = base
-        self.collapser = Sequential(Linear(self.base.ndim * 3, self.base.ndim, False), Dropout(0.5),
-                                    LayerNorm(self.base.ndim)).to(base.device)
-        self.decoder = LSTM(input_size=self.base.ndim, hidden_size=self.base.ndim, batch_first=True,
-                            bidirectional=True).to(base.device)
+        self.collapser = Sequential(Linear((self.base.ndim + self.base.enc_dim) * 3, self.base.ndim, False),
+                                    Dropout(0.5), LayerNorm(self.base.ndim)).to(base.device)
+        self.decoder = GRU(input_size=self.base.ndim, hidden_size=self.base.ndim, batch_first=True,
+                           bidirectional=True).to(base.device)
         self.classifier = Sequential(Linear(self.base.ndim * 8, self.base.ndim * 4), Dropout(0.5), GELU(),
                                      Linear(self.base.ndim * 4, self.base.ndim), Dropout(0.5), GELU(),
                                      Linear(self.base.ndim, 3)).to(base.device)
@@ -71,10 +73,13 @@ class PairClassifier(Module):
     def readout(self, atoms: Tensor, edge_index: Tensor, edge_ids: Tensor, word_pos: Tensor, word_batch: Tensor,
                 word_ids: Tensor, word_starts: Tensor, batch: Tensor) -> Tensor:
         ctx = self.base.contextualize_nodes(atoms, edge_index, edge_ids, word_ids, word_batch, word_starts, word_pos)
-        ctx, ids = to_dense_batch(ctx[word_pos], word_batch[word_starts.eq(1)], fill_value=0)
+        # ctx = cat((global_mean_pool(ctx, batch), global_max_pool(ctx, batch)), dim=-1)
+        # return ctx
+        ctx, ids = to_dense_batch(ctx, word_batch[word_starts.eq(1)], fill_value=0)
         return ctx
 
     def entail(self, ctx_h: Tensor, ctx_p: Tensor) -> Tensor:
+        # return self.classifier(cat((ctx_h, ctx_p, ctx_h - ctx_p, ctx_h * ctx_p), dim=-1))
         nwh, nwp = ctx_h.shape[1], ctx_p.shape[1]
         mask_h = ctx_h.eq(0).all(dim=-1)                                                                    # B, S1
         mask_p = ctx_p.eq(0).all(dim=-1)                                                                    # B, S2

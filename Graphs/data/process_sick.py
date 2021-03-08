@@ -1,6 +1,6 @@
 from .preprocessing import proofnet_to_graphdata, tokenize_data
 from .tokenizer import load_tokenizer
-from ..typing import Dict
+from ..typing import Dict, Tuple
 from LassyExtraction.aethel import ProofNet
 
 from itertools import product
@@ -17,7 +17,7 @@ def parsable(pn: ProofNet) -> bool:
         return False
 
 
-def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy'):
+def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy', fix_labels: bool = False):
     print('Loading tokenizer..')
     tokenizer = load_tokenizer(encoder)
 
@@ -30,38 +30,36 @@ def proc_sick(data_file: str = './everything.p', encoder: str = 'spacy'):
     print('Making graphs..')
     available_graphs = [[proofnet_to_graphdata(pn) for pn in sent] for sent in available_nets]
     print('Tokenizing graphs..')
-    tokenized = [[tokenize_data(g, tokenizer.atoms_to_ids, tokenizer.words_to_ids) for g in subset if g is not None]
-                 for subset in available_graphs]
+    tokenized = [[tokenize_data(g, tokenizer.atoms_to_ids, tokenizer.words_to_ids)
+                  for g in subset if g is not None] for subset in available_graphs]
     train, dev, test = [], [], []
     label_counts = [0, 0, 0]
-    for idx, sent_a, sent_b, _, subset in samples:
-        label = fixed_labels[int(idx)]
-        graphs_a, graphs_b, label, subset = tokenized[sent_a], tokenized[sent_b], label_map[label], subset.rstrip('\n')
+    failed = 0
+    for idx, sent_a, sent_b, original_label in samples:
+        fixed_label, subset = fixed_labels[int(idx)]
+        label = fixed_label if fix_labels else original_label
+        subset = subset.strip('\n')
+        graphs_a, graphs_b, label = tokenized[sent_a], tokenized[sent_b], label_map[label]
         if not graphs_a or not graphs_b:
-            continue
+            failed += 1
         label_counts[label] += 1
         combinations = list(product(graphs_a, graphs_b))
         add_to = train if subset == 'TRAIN' else dev if subset == 'TRIAL' else test
         for graph_a, graph_b in combinations:
-            if add_to == test:
-                add_to.append((graph_a, graph_b, label, 1.))
-                break
             add_to.append((graph_a, graph_b, label, 1 / len(combinations)))
     print('Saving new tokenizer..')
     with open(f'./Graphs/io/{encoder}/tokenizer.p', 'wb') as f:
         pickle.dump(tokenizer, f)
     print(f'{label_counts=}')
+    print(f'{failed=}')
+    print(f'{list(map(len, [train, dev, test]))}')
     return train, dev, test
 
 
-def get_fixed_labels(data_file: str = './SICK_whole_corpus_reannotated.csv') -> Dict[int, str]:
-    ret = dict()
+def get_fixed_labels(data_file: str = './SICK_whole_corpus_reannotated.csv') -> Dict[int, Tuple[str, str]]:
     with open(data_file, 'r') as f:
         next(f)
-        for line in f:
-            tabs = line.split('\t')
-            ret[int(tabs[0])] = tabs[3]
-    return ret
+        return {int(tabs[0]): (tabs[3], tabs[9]) for tabs in map(lambda line: line.split('\t'), f)}
 
 
 def save_sick(encoder: str):

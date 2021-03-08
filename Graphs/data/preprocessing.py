@@ -1,5 +1,5 @@
 from ..typing import (Tuple, List, Iterator, Set, Dict, Callable, Node, ANode, CNode, WNode, Graph, Edge, GraphData,
-                      Maybe)
+                      Maybe, Iterable)
 from collections import defaultdict
 from itertools import count
 
@@ -18,7 +18,6 @@ def tokenize_data(untokenized: GraphData, atom_map: Callable[[List[str]], List[i
     ids_and_starts = word_map(untokenized.words)
     l1, l2 = len([i for i, s in ids_and_starts if s]), len(untokenized.roots)
     if l1 != l2:
-        print(l1, l2)
         return None
     return GraphData(words=ids_and_starts, nodes=atom_ids, edge_index=untokenized.edge_index,
                      roots=untokenized.roots, edge_attrs=[edge_map[edge] for edge in untokenized.edge_attrs])
@@ -26,32 +25,73 @@ def tokenize_data(untokenized: GraphData, atom_map: Callable[[List[str]], List[i
 
 def proofnet_to_graphdata(proofnet: ProofNet) -> Maybe[GraphData]:
     _words = [w.strip('.,').replace('_', ' ') for w in proofnet.proof_frame.get_words()]
-    types = proofnet.proof_frame.get_types()
-    words = [(w, isinstance(wt, EmptyType)) for w, wt in zip(_words, types)]
+    _types = proofnet.proof_frame.get_types()
     graph = defaultdict(lambda: set())
     add_term(graph, proofnet.get_term(), count())
-    lex_anchors = get_anchors(graph)
-    if len(_words) != len(lex_anchors):
+    lex_anchors = get_anchors(graph)    # WNodes, listed in order of term traversal
+    if len([w for w, t in zip(_words, _types) if not isinstance(t, EmptyType)]) != len(lex_anchors):
         return None
 
     # Now convert to graphdata
-    nodes = sorted(get_nodes(graph), key=lambda node: node.index)
+    nodes = sort_nodes(get_nodes(graph))
     node_dict = {node.index: i for i, node in enumerate(nodes)}
     srcs, tgts, attrs = [], [], []
     for k in nodes:
-        vs = sorted(graph[k], key=lambda edge: edge.target.index)
+        vs = sort_edges(graph[k])
         srcs.extend([node_dict[k.index] for _ in graph[k]])
         tgts.extend([node_dict[v.index] for v, _ in vs])
         attrs.extend([e for _, e in vs])
-
+    roots = [i for i, n in enumerate(nodes) if isinstance(n, WNode)]
     return GraphData(nodes=['[PAD]' if isinstance(node, WNode) else node.label for node in nodes],
-                     edge_index=(srcs, tgts), words=words,
-                     edge_attrs=attrs, roots=sorted([node_dict[lanc.index] for lanc in lex_anchors]))
+                     edge_index=(srcs, tgts), words=[(w, isinstance(t, EmptyType)) for w, t in zip(_words, _types)],
+                     edge_attrs=attrs, roots=roots)
+
+
+def sort_edges(edges: Iterable[Edge]) -> List[Edge]:
+    wedges = sorted([e for e in edges if isinstance(e.target, WNode)], key=lambda e: int(e.target.label))
+    other = sorted([e for e in edges if not isinstance(e.target, WNode)], key=lambda e: e.target.index)
+    return wedges + other
+
+
+def sort_nodes(nodes: Iterable[Node]) -> List[Node]:
+    wnodes = sorted([n for n in nodes if isinstance(n, WNode)], key=lambda n: int(n.label))
+    other = sorted([n for n in nodes if not isinstance(n, WNode)], key=lambda n: n.index)
+    return wnodes + other
+
+
+def merge_multi_crd(words: List[str], types: List[WordType]) -> Tuple[List[str], List[WordType]]:
+    # distinguish between crd and det case
+    rw, rt = [], []
+    empties = []
+    adj = False
+    for w, t in zip(reversed(words), reversed(types)):
+        if isinstance(t, EmptyType):
+            empties.append(w)
+            adj = True
+        elif empties:
+            if adj and isinstance(t, BoxType) and t.modality == 'det':
+                e = empties.pop()
+                rw.append(f'{w} {e}')
+                rt.append(t)
+                adj = False
+            elif isinstance(t, FunctorType) and isinstance(t.argument, DiamondType) and t.argument.modality == 'cnj':
+                e = empties.pop()
+                rw.append(f'{w} {e}')
+                rt.append(t)
+            else:
+                rw.append(w)
+                rt.append(t)
+                adj = False
+        else:
+            rw.append(w)
+            rt.append(t)
+            adj = False
+    return list(reversed(rw)), list(reversed(rt))
 
 
 def make_atom_map(graphs: List[GraphData]) -> Dict[str, int]:
-    labels = set.union(*[set(g.nodes) for g in graphs]).difference({'[PAD]', '[MASK]'})
-    return {label: i for i, label in enumerate(['[PAD]', '[MASK]'] + sorted(labels))}
+    labels = set.union(*[set(g.nodes) for g in graphs]).difference({'[PAD]'})
+    return {label: i for i, label in enumerate(['[PAD]'] + sorted(labels))}
 
 
 def get_nodes(graph: Graph) -> Set[Node]:
@@ -96,44 +136,49 @@ def add_term(graph: Graph, term: Term, vargen: Iterator[int]) -> Node:
         graph[con_node].add(redge(WNode(next(vargen), str(term.idx))))
         return con_node
     elif isinstance(term, DiamondElim):
-        mod_node = CNode(next(vargen), vee(term.diamond))
-        graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
-        return mod_node
+        return add_term(graph, term.body, vargen)
+        # mod_node = CNode(next(vargen), vee(term.diamond))
+        # graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
+        # return mod_node
     elif isinstance(term, DiamondIntro):
-        mod_node = CNode(next(vargen), wedge(term.diamond))
-        graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
-        return mod_node
+        return add_term(graph, term.body, vargen)
+        # mod_node = CNode(next(vargen), wedge(term.diamond))
+        # graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
+        # return mod_node
     elif isinstance(term, BoxElim):
-        mod_node = CNode(next(vargen), cup(term.box))
-        graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
-        return mod_node
+        return add_term(graph, term.body, vargen)
+        # mod_node = CNode(next(vargen), cup(term.box))
+        # graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
+        # return mod_node
     elif isinstance(term, BoxIntro):
-        mod_node = CNode(next(vargen), cap(term.box))
-        graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
-        return mod_node
+        return add_term(graph, term.body, vargen)
+        # mod_node = CNode(next(vargen), cap(term.box))
+        # graph[mod_node].add(uedge(add_term(graph, term.body, vargen)))
+        # return mod_node
     else:
         raise TypeError
 
 
 def add_type(graph: Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
-    if isinstance(wordtype, AtomicType):
-        return ANode(next(vargen), label=wordtype.depolarize().type)
-    if isinstance(wordtype, FunctorType):
-        fun_node = CNode(next(vargen), 'fun')
-        graph[fun_node].add(ledge(add_type(graph, wordtype.argument, vargen)))
-        graph[fun_node].add(redge(add_type(graph, wordtype.result, vargen)))
-        return fun_node
-    if isinstance(wordtype, BoxType):
-        m_node = CNode(next(vargen), print_box(wordtype.modality))
-        graph[m_node].add(uedge(add_type(graph, wordtype.content, vargen)))
-        return m_node
-    if isinstance(wordtype, DiamondType):
-        m_node = CNode(next(vargen), print_diamond(wordtype.modality))
-        graph[m_node].add(uedge(add_type(graph, wordtype.content, vargen)))
-        return m_node
-    if isinstance(wordtype, EmptyType):
-        raise NotImplementedError
-    raise TypeError(f'Wtf is this {wordtype}')
+    return ANode(next(vargen), label=str(wordtype.depolarize()))
+    # if isinstance(wordtype, AtomicType):
+    #     return ANode(next(vargen), label=wordtype.depolarize().type)
+    # if isinstance(wordtype, FunctorType):
+    #     fun_node = CNode(next(vargen), 'fun')
+    #     graph[fun_node].add(ledge(add_type(graph, wordtype.argument, vargen)))
+    #     graph[fun_node].add(redge(add_type(graph, wordtype.result, vargen)))
+    #     return fun_node
+    # if isinstance(wordtype, BoxType):
+    #     m_node = CNode(next(vargen), print_box(wordtype.modality))
+    #     graph[m_node].add(uedge(add_type(graph, wordtype.content, vargen)))
+    #     return m_node
+    # if isinstance(wordtype, DiamondType):
+    #     m_node = CNode(next(vargen), print_diamond(wordtype.modality))
+    #     graph[m_node].add(uedge(add_type(graph, wordtype.content, vargen)))
+    #     return m_node
+    # if isinstance(wordtype, EmptyType):
+    #     raise NotImplementedError
+    # raise TypeError(f'Wtf is this {wordtype}')
 
 
 def visualize(graph: Graph):

@@ -5,6 +5,9 @@ import spacy
 from warnings import warn
 
 
+np.random.seed(42)
+
+
 class Tokenizer:
     def __init__(self, atom_map: Dict[str, int], word_tokenizer: str):
         assert word_tokenizer in {'bert', 'robert', 'spacy'}
@@ -54,7 +57,7 @@ class BertTWrapper:
 
     def words_to_ids(self, words: List[str]) -> List[Tuple[int, bool]]:
         subwords = [self.core.encode(w, add_special_tokens=False) for w in words]
-        return self._cls + [(t, i == (len(w) - 1)) for w in subwords for i, t in enumerate(w)] + self._sep
+        return self._cls + [(t, i == 0) for w in subwords for i, t in enumerate(w)] + self._sep
 
     def ids_to_words(self, ids: List[int]) -> List[str]:
         return self.core.convert_ids_to_tokens(ids, True)
@@ -69,7 +72,7 @@ class SpacyTWrapper:
     def words_to_ids(self, words: List[Tuple[str, bool]]) -> List[Tuple[int, bool]]:
         words, masks = list(zip(*words))
         docs = self.model.pipe(words, disable=['parser', 'tagger', 'ner'])
-        return [(token.lex_id if token.has_vector else self.unk, i == (len(tokens) - 1) and not mask)
+        return [(token.lex_id if token.has_vector else self.unk, i == 0 and not mask)
                 for tokens, mask in zip(docs, masks) for i, token in enumerate(tokens)]
 
     def ids_to_words(self, ids: List[int]):

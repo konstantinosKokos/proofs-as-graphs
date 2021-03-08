@@ -1,11 +1,14 @@
 import torch
 from ..neural.model import PairClassifier
 from ..typing import Batch, Tensor, Tuple, Logger, DataLoader, Module, OptLike, Callable
-from ..neural.utils.metrics import accuracy, mean, per_class_accuracy
+from ..neural.utils.metrics import mean, per_class_accuracy
 from ..neural.utils.schedules import save_if_best
 
 
-def get_entailment_values(model: PairClassifier, batch: Batch, pause: bool) -> Tuple[Tensor, Tensor]:
+from tqdm import tqdm
+
+
+def get_entailment_values(model: PairClassifier, batch: Batch) -> Tuple[Tensor, Tensor, Tensor]:
     vectors_h = model.readout(atoms=batch.x_h, word_ids=batch.word_ids_h, word_pos=batch.word_pos_h,
                               word_batch=batch.word_ids_h_batch, word_starts=batch.word_starts_h,
                               edge_index=batch.edge_index_h, edge_ids=batch.edge_attr_h, batch=batch.x_h_batch)
@@ -13,21 +16,18 @@ def get_entailment_values(model: PairClassifier, batch: Batch, pause: bool) -> T
                               word_batch=batch.word_ids_p_batch, word_starts=batch.word_starts_p,
                               edge_index=batch.edge_index_p, edge_ids=batch.edge_attr_p, batch=batch.x_p_batch)
     predictions = model.entail(vectors_h, vectors_p)
-    if pause:
-        import pdb
-        pdb.set_trace()
-    return predictions, batch.y
+    return predictions, batch.y, batch.w
 
 
-def log_batch(model: PairClassifier, batch: Batch, logger: Logger, train: bool, pause: bool) -> None:
-    predictions, truths = get_entailment_values(model, batch.to(model.base.device), pause=pause)
-    logger.log(predictions, truths, train=train)
+def log_batch(model: PairClassifier, batch: Batch, logger: Logger, train: bool) -> None:
+    predictions, truths, w = get_entailment_values(model, batch.to(model.base.device))
+    logger.log(predictions, truths, w, train=train)
 
 
-def log_epoch(model: PairClassifier, dataloader: DataLoader, logger: Logger, train: bool, pause: bool):
+def log_epoch(model: PairClassifier, dataloader: DataLoader, logger: Logger, train: bool):
     model.train(train)
-    for batch in iter(dataloader):
-        log_batch(model, batch, logger, train, pause=pause)
+    for batch in tqdm(dataloader):
+        log_batch(model, batch, logger, train)
     logger.register_epoch(train, save_if_best(lambda: model.save(f'./Graphs/io/{model.base.tokenizer.name}/train.model')))
 
 
@@ -41,14 +41,14 @@ class TrainLogger(Logger):
                           'dev': {'loss': [], 'nsamples': [], 'correct': []}}
 
     def log(self, *tensors: Tensor, train: bool):
-        predictions, truths = tensors
+        predictions, truths, w = tensors
         if train:
-            self.train_log(predictions, truths)
+            self.train_log(predictions, truths, w)
         else:
-            self.dev_log(predictions, truths)
+            self.dev_log(predictions, truths, w)
 
-    def train_log(self, predictions: Tensor, truths: Tensor):
-        loss = self.loss_fn(predictions, truths)
+    def train_log(self, predictions: Tensor, truths: Tensor, w: Tensor):
+        loss = (self.loss_fn(predictions, truths) * w).sum()
         loss.backward()
         self.opt.step()
         self.opt.zero_grad()

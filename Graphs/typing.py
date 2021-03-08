@@ -5,7 +5,7 @@ from torch.nn import Module
 from torch.optim import Optimizer
 
 from typing import (List, Tuple, Union, Protocol, Dict, Any, TypeVar, Callable, Protocol, Sequence, overload,
-                    Iterator, Set, NamedTuple, Generic)
+                    Iterator, Set, NamedTuple, Generic, Iterable)
 from typing import Optional as Maybe
 from numpy import array
 

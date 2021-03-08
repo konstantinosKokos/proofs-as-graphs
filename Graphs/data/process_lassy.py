@@ -15,9 +15,9 @@ def proc_lassy(data_file: str = '../lassy-tlg-extraction/data/train_dev_test_0.4
     print('Building tokenizer..')
     tokenizer = Tokenizer(atom_map, encoder)
     print('Tokenizing graphs..')
-    tokenized = [[tokenize_data(g, tokenizer.atoms_to_ids, tokenizer.words_to_ids) for g in tqdm(subset)]
-                 for subset in graphs]
-    return tokenized, tokenizer
+    tokenized = [[tokenize_data(g, tokenizer.atoms_to_ids, tokenizer.words_to_ids)
+                  for g in tqdm(subset) if g is not None] for subset in graphs]
+    return [[t for t in subset if t is not None] for subset in tokenized], tokenizer
 
 
 def save_lassy(encoder: str):

@@ -1,5 +1,5 @@
 from transformers import RobertaModel, BertModel
-from torch.nn import LSTM
+from torch.nn import GRU, Linear
 from torch.nn.functional import dropout
 from ..data.tokenizer import Tokenizer, BertTWrapper, SpacyTWrapper
 from .embedding import from_table
@@ -17,7 +17,7 @@ class Encoder(Module):
         elif tokenizer.name == 'spacy':
             assert isinstance(tokenizer.word_tokenizer, SpacyTWrapper)
             self.pad_value = tokenizer.word_tokenizer.pad_value
-            self.core = LSTMWrapper(tokenizer, device, hidden_size, self.pad_value)
+            self.core = GRUWrapper(tokenizer, device, hidden_size, self.pad_value)
         else:
             raise ValueError
         print(f'Initialized a {type(self.core)} encoder')
@@ -26,26 +26,28 @@ class Encoder(Module):
         return self.core.forward(x)
 
 
-class LSTMWrapper(Module):
+class GRUWrapper(Module):
     def __init__(self, tokenizer: Tokenizer, device: str, hidden_size: Maybe[int], pad_value: int):
-        super(LSTMWrapper, self).__init__()
+        super(GRUWrapper, self).__init__()
         hidden_size = 256 if hidden_size is None else hidden_size
         self.embedding = from_table(tokenizer.word_tokenizer.get_embedding_table(), False, pad_value).to(device)
-        self.lstm = LSTM(input_size=tokenizer.word_tokenizer.dim, hidden_size=hidden_size, bidirectional=True,
-                         num_layers=1, batch_first=True).to(device)
+        self.rnn = GRU(input_size=tokenizer.word_tokenizer.dim, hidden_size=hidden_size, bidirectional=True,
+                       num_layers=2, batch_first=True, dropout=0.5).to(device)
 
     def forward(self, word_ids: Tensor) -> Tensor:
-        ctx, _ = self.lstm(self.embedding(word_ids))
+        ctx, _ = self.rnn(self.embedding(word_ids))
         return sum(ctx.chunk(2, dim=-1))
 
 
 class BertWrapper(Module):
-    def __init__(self, tokenizer: Tokenizer, device: str):
+    def __init__(self, tokenizer: Tokenizer, freeze: bool, device: str):
         super(BertWrapper, self).__init__()
         if tokenizer.name == 'robert':
             self.core = RobertaModel.from_pretrained("pdelobelle/robbert-v2-dutch-base").to(device)
         elif tokenizer.name == 'bert':
             self.core = BertModel.from_pretrained("wietsedv/bert-base-dutch-cased").to(device)
+        if freeze:
+            self.core.requires_grad_(False)
         self.pad_value = tokenizer.word_tokenizer.core.pad_token_id
         self.device = device
 
