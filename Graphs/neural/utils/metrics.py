@@ -1,5 +1,5 @@
 import torch
-from ...typing import Tensor, Tuple, Sequence, List
+from ...types import Tensor, Tuple, List, Sequence
 
 
 @torch.no_grad()

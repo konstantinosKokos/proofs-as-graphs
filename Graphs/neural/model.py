@@ -1,95 +1,80 @@
-from torch_geometric.utils import to_dense_batch, softmax
-from ..typing import Tensor, Tuple
-from ..data.tokenizer import Tokenizer
-from ..neural.embedding import InvertibleEmbedder
-from ..neural.encoders import Encoder
-from ..neural.gnn import TConvWrapper
-from ..neural.mha import MultiHeadAttention
+from ..types import Module, Tensor, List, Maybe, Tuple, Batch
+from .gnn import MultihopTransConv
+from .tokenizer import BertWrapper
 
-from torch.nn import Module, Linear, Sequential, Dropout, Embedding, Tanh, LSTM, GELU, LayerNorm
+from math import sqrt
+
+from torch import cat, cartesian_prod
+from torch.nn import Embedding, LayerNorm, Linear, Sequential
 from torch.nn.functional import pad
-from torch import cat, save, bmm
+from torch_geometric.utils import to_dense_batch
+from torch_geometric.nn import global_mean_pool
 
 
-class Base(Module):
-    def __init__(self, tokenizer: Tokenizer, num_layers: int, device: str = 'cuda'):
-        super(Base, self).__init__()
-        self.ndim = 128
-        self.tokenizer = tokenizer
-        self.atom_embedding = InvertibleEmbedder(len(tokenizer.atom_map), self.ndim).to(device)
-        self.edge_embedding = Embedding(3, self.ndim).to(device)
-        self.gnn = TConvWrapper(self.ndim, self.ndim, 0.5, num_layers, 2).to(device)
-        # self.gnn = BGraphConv(self.ndim, 'mean').to(device)
-        self.num_layers = num_layers
-        self.device = device
-        self.dropout = Dropout(0.5)
+class GNN(Module):
+    def __init__(self, layer_dims: List[int], edge_dim: int, num_nodes: int, num_edges: int):
+        super(GNN, self).__init__()
+        self.node_embedding = Embedding(num_nodes, layer_dims[0])
+        self.edge_embedding = Embedding(num_edges, edge_dim)
+        self.gnn = MultihopTransConv(layer_dims, edge_dim)
 
-    def embed_atoms(self, atoms: Tensor) -> Tensor:
-        return self.atom_embedding.embed(atoms).squeeze(1)
-
-    def embed_nodes(self, atoms: Tensor) -> Tensor:
-        return self.embed_atoms(atoms)
-
-    def embed_edges(self, edges: Tensor) -> Tensor:
-        return self.edge_embedding(edges)
-
-    def classify_nodes(self, weights: Tensor) -> Tensor:
-        return self.atom_embedding.invert(weights)
-
-    def contextualize_nodes(self, atoms: Tensor, edge_index: Tensor, edge_ids: Tensor) -> Tensor:
-        vectors = self.dropout(self.embed_nodes(atoms))
-        edge_attr = self.dropout(self.embed_edges(edge_ids))
-        return self.gnn(vectors, edge_index, edge_attr)
-
-    def save(self, path: str) -> None:
-        save({'model_state_dict': self.state_dict()}, path)
+    def forward(self, x: Tensor, edge_index: Tensor, edge_attr: Tensor, anchor_pos: Maybe[Tensor] = None):
+        node_attr = self.node_embedding(x)
+        edge_attr = self.edge_embedding(edge_attr)
+        ctx = self.gnn(node_attr, edge_index, edge_attr)
+        return ctx if anchor_pos is None else ctx[anchor_pos]
 
 
 class PairClassifier(Module):
-    def __init__(self, base: Base):
+    def __init__(self, layer_dims: List[int], edge_dim: int, num_nodes: int,
+                 num_edges: int, bert: BertWrapper):
         super(PairClassifier, self).__init__()
-        self.base = base
-        self.word_encoder = Encoder(base.tokenizer, base.device, hidden_size=128)
-        self.decoder = LSTM(input_size=128, hidden_size=64, batch_first=True, bidirectional=True).to(base.device)
-        self.collapser = Sequential(Linear(2 * 256, 128, True), GELU(), Dropout(0.5), LayerNorm(128)).to(base.device)
-        self.combiner = Sequential(Linear(128 * 4, 64), Dropout(0.5), Tanh(), Linear(64, 3)).to(base.device)
-        self.dropout = Dropout(0.5)
+        self.input_dim = layer_dims[0]
+        self.output_dim = layer_dims[-1]
+        self.gnn = GNN(layer_dims, edge_dim, num_nodes, num_edges)
+        self.bert = bert
+        self.cls = Sequential(LayerNorm(768), Linear(768, 3))
 
-    def readout(self, atoms: Tensor, edge_index: Tensor, edge_ids: Tensor, word_pos: Tensor, word_batch: Tensor,
-                word_ids: Tensor, word_starts: Tensor) -> Tuple[Tensor, Tensor]:
-        node_reprs = self.base.contextualize_nodes(atoms, edge_index, edge_ids)[word_pos]
-        words, ids = to_dense_batch(word_ids, word_batch, fill_value=self.word_encoder.pad_value)
-        ctx = self.dropout(self.word_encoder(words)[ids][word_starts.eq(1)])
-        ctx, _ = to_dense_batch(ctx, word_batch[word_starts.eq(1)])
-        node_reprs, _ = to_dense_batch(node_reprs, word_batch[word_starts.eq(1)], fill_value=0)
-        return ctx, node_reprs
+    def readouts(self, x_p: Tensor, edge_index_p: Tensor, edge_attr_p: Tensor, word_pos_p: Tensor,
+                 x_h: Tensor, edge_index_h: Tensor, edge_attr_h: Tensor, word_pos_h: Tensor) -> Tuple[Tensor, Tensor]:
+        ctx_p = self.gnn(x_p, edge_index_p, edge_attr_p, word_pos_p)
+        ctx_h = self.gnn(x_h, edge_index_h, edge_attr_h, word_pos_h)
+        return ctx_p, ctx_h
 
-    def entail(self, ctx_h: Tensor, n_h: Tensor, ctx_p: Tensor, n_p: Tensor) -> Tuple[Tensor, Tensor]:
-        nwh, nwp = n_h.shape[1], n_p.shape[1]
-        mask_h = n_h.eq(0).all(dim=-1)                                                                      # B, S1
-        mask_p = n_p.eq(0).all(dim=-1)                                                                      # B, S2
-        mask = mask_h.unsqueeze(-1).repeat(1, 1, nwp).bitwise_or(mask_p.unsqueeze(1).repeat(1, nwh, 1))     # B, S1, S2
-        cross_atn = bmm(n_h, n_p.permute(0, 2, 1))                                                          # B, S1, S2
-        cross_atn[mask] = -1e10
-        ctx_hp = bmm(cross_atn.softmax(dim=1).permute(0, 2, 1), ctx_h)                                      # B, S2, d
-        ctx_ph = bmm(cross_atn.softmax(dim=2), ctx_p)                                                       # B, S1, d
-        ctx_h = self.collapser(cat((ctx_h - ctx_ph, ctx_h * ctx_ph), dim=-1))                               # B, S1, d'
-        ctx_p = self.collapser(cat((ctx_p - ctx_hp, ctx_p * ctx_hp), dim=-1))                               # B, S2, d'
-        ctx_h = pad(ctx_h, (0, 0, 0, max(0, nwp - nwh)), 'constant', 0.)                                    # B, S, d'
-        mask_h = pad(mask_h.t(), (0, 0, 0, max(0, nwp - nwh)), 'constant', True).t()                        # B, S
-        ctx_p = pad(ctx_p, (0, 0, 0, max(0, nwh - nwp)), 'constant', 0.)                                    # B, S, d'
-        mask_p = pad(mask_p.t(), (0, 0, 0, max(0, nwh - nwp)), 'constant', True).t()                        # B, S
-        ctx_h = ctx_h.masked_fill(mask_h.unsqueeze(-1), 0)
-        ctx_p = ctx_p.masked_fill(mask_p.unsqueeze(-1), 0)
-        d_out, _ = self.decoder(cat((ctx_h, ctx_p), dim=0))                                                 # 2B, S, d''
-        ctx_h, ctx_p = d_out.chunk(2, dim=0)
-        ctx_h = self.dropout(ctx_h.masked_fill(mask_h.unsqueeze(-1), 0))                                    # B, S, d''
-        ctx_p = self.dropout(ctx_p.masked_fill(mask_p.unsqueeze(-1), 0))                                    # B, S, d''
-        ctx_h = cat((ctx_h.max(dim=1)[0], ctx_h.sum(dim=1)/mask_h.logical_not().sum(dim=1).unsqueeze(-1)),  # B, S, 2d''
-                    dim=-1)
-        ctx_p = cat((ctx_p.max(dim=1)[0], ctx_p.sum(dim=1)/mask_p.logical_not().sum(dim=1).unsqueeze(-1)),  # B, S, 2d''
-                    dim=-1)
-        return self.combiner(cat((ctx_h, ctx_p), dim=-1)), cross_atn
+    def bert_vectors(self, word_ids_p: Tensor, word_ids_p_batch: Tensor, word_starts_p: Tensor,
+                     word_ids_h: Tensor, word_ids_h_batch: Tensor, word_starts_h: Tensor) -> Tuple[Tensor, Tensor]:
+        p_ids, p_mask = to_dense_batch(word_ids_p, word_ids_p_batch, self.bert.tokenizer.pad_token_id)
+        h_ids, h_mask = to_dense_batch(word_ids_h, word_ids_h_batch, self.bert.tokenizer.pad_token_id)
+        hpad = (0, max(0, p_ids.shape[1] - h_ids.shape[1]))
+        ppad = (0, max(0, h_ids.shape[1] - p_ids.shape[1]))
+        h_ids = pad(h_ids, hpad, value=self.bert.tokenizer.pad_token_id)
+        h_mask = pad(h_mask, hpad, value=False)
+        p_ids = pad(p_ids, ppad, value=self.bert.tokenizer.pad_token_id)
+        p_mask = pad(p_mask, ppad, value=False)
+        ids = cat((p_ids, h_ids), dim=0)
+        mask = cat((p_mask, h_mask), dim=0)
+        lhs_p, lhs_h = self.bert.model.forward(ids, mask).last_hidden_state.chunk(2, dim=0)
+        return lhs_p[p_mask][word_starts_p.eq(1)], lhs_h[h_mask][word_starts_h.eq(1)]
 
-    def save(self, path: str) -> None:
-        save({'model_state_dict': self.state_dict()}, path)
+    def cross_attention(self, ctx_p: Tensor, ctx_h: Tensor, lhs_p: Tensor, lhs_h: Tensor,
+                        batch_p: Tensor, batch_h: Tensor) -> Tensor:
+        np, nh = batch_p.shape[0], batch_h.shape[0]
+        mask_p, mask_h = cartesian_prod(batch_h, batch_p).view(nh, np, -1).chunk(2, dim=-1)
+        mask_hp = mask_p.eq(mask_h).squeeze()
+        atn = ctx_h @ ctx_p.t() / sqrt(self.output_dim)
+        atn[mask_hp] = -1e08
+        atn = atn.softmax(dim=-1)
+        cls = self.cls(lhs_h + atn @ lhs_p)
+        return global_mean_pool(cls.softmax(dim=-1), batch_h)
+
+    def batch_to_label(self, batch: Batch) -> Tensor:
+        word_reprs_p, word_reprs_h = self.bert_vectors(
+            batch.word_ids_p, batch.word_ids_p_batch, batch.word_starts_p,
+            batch.word_ids_h, batch.word_ids_h_batch, batch.word_starts_h)
+        node_reprs_p, node_reprs_h = self.readouts(
+            batch.x_p, batch.edge_index_p, batch.edge_attr_p, batch.word_pos_p,
+            batch.x_h, batch.edge_index_h, batch.edge_attr_h, batch.word_pos_h)
+        return self.cross_attention(node_reprs_p, node_reprs_h,
+                                    word_reprs_p, word_reprs_h,
+                                    batch.word_ids_p_batch[batch.word_starts_p.eq(1)],
+                                    batch.word_ids_h_batch[batch.word_starts_h.eq(1)])
