@@ -15,10 +15,17 @@ def proofnet_to_graphdata(pn: ProofNet) -> Maybe[GraphData]:
     graph: Graph = defaultdict(lambda: set())
     lex_anchors, conclusion = add_types(graph, words, types, pn.proof_frame.conclusion)
     conc = add_axiom_links(graph, conclusion, pn.axiom_links)
+
     try:
         merge_multi_crd(graph, lex_anchors)
     except ValueError:
         return None
+
+    # if 'λ' in pn.print_term():
+    #     visualize(graph)
+    #     import pdb
+    #     pdb.set_trace()
+
 
     # Now convert to graphdata
     nodes = sorted(get_nodes(graph), key=lambda node: node.index)
@@ -75,7 +82,7 @@ def add_type(graph: Graph, wordtype: WordType, vargen: Iterator[int]) -> Node:
             arglabel = arglabel or ctx
             arg, res = (argnode, arglabel), (resnode, reslabel)
             (pnode, plabel), (nnode, nlabel) = (res, arg) if pol else (arg, res)
-            add(graph, connective,  pnode, plabel)
+            add(graph, connective,  pnode, plabel if pol else 'hypo')
             add(graph, nnode, connective, nlabel)
             return connective, None
         if isinstance(wt, DiamondType):
@@ -182,6 +189,11 @@ def tokenize_graph(graph: GraphData, node_map: Dict[str, int], edge_map: Dict[st
     edge_ids = [edge_map[attr] for attr in graph.edge_attrs]
     return GraphData(words=word_map(graph.words), nodes=node_ids, edge_index=graph.edge_index,
                      edge_attrs=edge_ids, conclusion=graph.conclusion, roots=graph.roots)
+
+
+def detach_cotensor(graph: Graph):
+    for src in filter(lambda n: isinstance(n, CNode), graph.keys()):
+        graph[src] = {(k, v) for k, v in graph[src] if v != 'hypo'}
 
 
 # def remove_anchors(graph: Graph, anchors: List[Node]) -> List[Node]:

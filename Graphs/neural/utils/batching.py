@@ -16,11 +16,15 @@ def tensorize_graph(graph: GraphData) -> Tuple[Tensor, Tensor, Tensor, Tensor, T
     return node_labels, edge_idx, edge_labels, anchors, longt(word_ids), longt(word_starts)
 
 
-def graphs_to_data(premise_graph: GraphData, hypothesis_graph: GraphData, label: int) -> ProofPair:
-    return ProofPair(tensorize_graph(premise_graph), tensorize_graph(hypothesis_graph), longt([label]))
+def label_to_tensor(label: str) -> Tensor:
+    v = 0 if label == 'NEUTRAL' else 1 if label == 'ENTAILMENT' else 2
+    return longt([v])
+
+
+def graphs_to_data(premise_graph: GraphData, hypothesis_graph: GraphData, label: str) -> ProofPair:
+    return ProofPair(tensorize_graph(premise_graph), tensorize_graph(hypothesis_graph), label_to_tensor(label))
 
 
 def pair_loader(pairs: List[ProofPair], batch_size: int, shuffle: bool):
     return DataLoader(pairs, batch_size=batch_size, follow_batch=['x_h', 'x_p', 'word_ids_h', 'word_ids_p'],
                       shuffle=shuffle)
-

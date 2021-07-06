@@ -11,8 +11,8 @@ def proc_sick(data_file: str, word_tokenizer: Maybe[Callable[[List[str]], List[T
                  Dict[str, int]]:
     with open(data_file, 'rb') as f:
         sents, nets, samples = pickle.load(f)
-    samples = [(s_idx, h_idx, p_idx, label, subset) for (s_idx, h_idx, p_idx, label, subset) in samples
-               if nets[h_idx] is not None and nets[p_idx] is not None]
+    samples = [(s_idx, p_idx, h_idx, label, subset) for (s_idx, p_idx, h_idx, label, subset) in samples
+               if nets[p_idx] is not None and nets[h_idx] is not None]
     sents = {i: (sents[i], proofnet_to_graphdata(nets[i]))
              for i in sorted(set(map(lambda s: s[1], samples)).union(set(map(lambda s: s[2], samples))))}
     sents = {k: v for k, v in sents.items() if v[1] is not None}

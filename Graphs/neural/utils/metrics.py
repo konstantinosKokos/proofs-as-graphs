@@ -1,5 +1,6 @@
 import torch
 from ...types import Tensor, Tuple, List, Sequence
+from torch.nn.functional import one_hot
 
 
 @torch.no_grad()
@@ -8,12 +9,16 @@ def accuracy(predictions: Tensor, truths: Tensor) -> Tuple[int, int]:
 
 
 @torch.no_grad()
-def per_class_accuracy(predictions: Tensor, truths: Tensor) -> Tuple[List[int], List[int]]:
-    total = [truths.eq(c).sum().item() for c in range(predictions.shape[1])]
-    correct = [torch.sum(predictions[truths.eq(c)].argmax(dim=-1).eq(truths[truths.eq(c)])).item()
-               if total[c] != 0 else 0
-               for c in range(predictions.shape[1])]
-    return total, correct
+def per_class_accuracy(predictions: Tensor, truths: Tensor, num_classes: int = 3) -> Tuple[Tensor, Tensor]:
+    xs = one_hot(predictions.argmax(dim=1), num_classes)
+    ys = one_hot(truths, num_classes)
+    return (xs.eq(ys) * ys).sum(dim=0), ys.sum(dim=0)
+
+
+@torch.no_grad()
+def epoch_accuracies(per_class_accs: List[Tuple[Tensor, Tensor]]):
+    correct, total = list(map(sum, zip(*per_class_accs)))
+    return (correct/total).tolist() + [(correct.sum()/total.sum()).item()]
 
 
 def mean(xs: Sequence):
